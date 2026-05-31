@@ -4,11 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Сетевой симулятор револьвера .357</title>
-    
+
     <!-- Настройки превью для Telegram (Open Graph) -->
     <meta property="og:title" content="🔫 Револьвер .357 Онлайн">
     <meta property="og:description" content="Прими вызов в русской рулетке онлайн! Заходи в мою комнату, крути барабан и испытай удачу.">
-    <meta property="og:image" content="https://твой_логин.github.io/имя_репозитория/preview.jpg"> <!-- Замените на реальную ссылку на картинку в будущем -->
+    <!-- Укажите ссылку на картинку, которая будет отображаться при отправке прямой ссылки на сайт -->
+    <meta property="og:image" content="https://твой_логин.github.io/имя_репозитория/preview.jpg"> 
     <meta property="og:type" content="website">
 
     <!-- Подключение Telegram WebApp SDK -->
@@ -159,7 +160,7 @@
             
             <!-- Левая панель: Оружие -->
             <div class="lg:col-span-7 bg-gray-900 bg-opacity-40 border border-gray-850 p-6 flex flex-col justify-between relative rounded-lg overflow-hidden min-h-[360px]">
-                <div id="session-label" class="absolute top-2 left-3 text-[10px] text-gray-600 tracking-widest uppercase">Сессия</div>
+                <div id="session-label" class="absolute top-2 left-3 text-[10px] text-gray-600 tracking-widest uppercase flex items-center gap-1">Сессия</div>
                 
                 <div class="flex justify-between items-center z-10 pt-4">
                     <div class="flex gap-2 flex-wrap">
@@ -557,26 +558,6 @@
             }, 15);
         }
 
-        // Функция формирования ссылки и отправки приглашения
-        function shareRoomLink() {
-            if (!roomId) return;
-            
-            // ВНИМАНИЕ: Замените 'YOUR_BOT_USERNAME' и 'play' на ваши реальные значения из BotFather!
-            const botUsername = "YOUR_BOT_USERNAME"; // Например: revolver_357_bot
-            const appShortName = "play";              // Короткое имя приложения (Short Name) из BotFather
-            
-            const inviteLink = `https://t.me/${botUsername}/${appShortName}?startapp=${roomId}`;
-            const shareText = `🔫 Принимай вызов в Revolver .357! Я создал комнату #${roomId}. Заходи, сыграем в русскую рулетку онлайн!`;
-            
-            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(shareText)}`;
-            
-            if (tg) {
-                tg.openTelegramLink(shareUrl); // Нативно открывает меню контактов внутри Telegram
-            } else {
-                window.open(shareUrl, '_blank'); // Резерв на случай браузера
-            }
-        }
-
         function playExtractorSound() {
             if (!audioCtx) return;
             for (let i = 0; i < 5; i++) {
@@ -693,9 +674,12 @@
         // --- ИНИЦИАЛИЗАЦИЯ И ИНТЕРФЕЙС ---
 
         window.addEventListener('DOMContentLoaded', () => {
+            // Безопасно подтягиваем и форматируем имя пользователя из Telegram
             if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
                 const user = tg.initDataUnsafe.user;
-                myName = user.first_name || user.username || "Игрок";
+                const firstName = user.first_name || '';
+                const lastName = user.last_name ? ' ' + user.last_name : '';
+                myName = (firstName + lastName).trim() || user.username || "Игрок";
             } else {
                 myName = "Игрок_" + Math.floor(100 + Math.random() * 900);
             }
@@ -784,7 +768,27 @@
             riskPercentageEl.textContent = `${risk}%`;
         }
 
-        // --- КОПИРОВАНИЕ НАЗВАНИЯ/КОДА КОМНАТЫ ---
+        // --- ФУНКЦИЯ ПОДЕЛИТЬСЯ И КОПИРОВАНИЕ ---
+
+        function shareRoomLink() {
+            if (!roomId) return;
+            
+            // ВНИМАНИЕ: Замените эти значения на юзернейм вашего созданного бота и short name вашего Mini App!
+            const botUsername = "revolver_357_bot"; // Например: revolver_357_bot
+            const appShortName = "play";            // Короткое имя приложения, указанное в BotFather
+            
+            const inviteLink = `https://t.me/${botUsername}/${appShortName}?startapp=${roomId}`;
+            const shareText = `🔫 Я создал комнату в Revolver .357! Принимай вызов, сыграем в русскую рулетку онлайн!`;
+            
+            // Формируем стандартную ссылку Telegram для отправки
+            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(shareText)}`;
+            
+            if (tg) {
+                tg.openTelegramLink(shareUrl); // Открывает нативный диалог выбора чата внутри Telegram Mini App
+            } else {
+                window.open(shareUrl, '_blank'); // Резервный вариант для десктопного / обычного браузера
+            }
+        }
 
         function copyRoomCode() {
             if (!roomId) return;
@@ -865,14 +869,19 @@
 
             showScreen('game');
             
-            // Кнопка приглашения добавлена в session-label
-            document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">✉️ Пригласить</button> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
+            // Динамическое обновление заголовка сессии кнопкой "Пригласить"
+            document.getElementById('session-label').innerHTML = `
+                Сетевая комната: 
+                <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> 
+                <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">
+                    ✉️ Пригласить
+                </button>
+            `;
             
             document.getElementById('lobby-panel').classList.add('hidden');
             document.getElementById('cylinder-visual-box').classList.remove('hidden');
             document.getElementById('btn-start-game').textContent = "НАЧАТЬ СЕТЕВУЮ ДУЭЛЬ";
 
-            // Если вы создатель, инициализируем лобби собой, чтобы сразу стать Хостом (Дилером) и не видеть плашку гостя
             if (isCreator) {
                 players = [{ id: myClientId, name: myName, isAlive: true }];
             } else {
@@ -906,7 +915,7 @@
                 keepalive: 60,
                 clean: true,
                 connectTimeout: 4000,
-                reconnectPeriod: 2000 // Автоподключение каждые 2 секунды при разрыве связи
+                reconnectPeriod: 2000 
             });
 
             mqttClient.on('connect', () => {
@@ -929,7 +938,6 @@
 
             mqttClient.on('message', (topic, payload) => {
                 try {
-                    // Используем TextDecoder вместо payload.toString(), чтобы избежать сбоев разбора JSON на смартфонах и в Telegram WebApp
                     const decoder = new TextDecoder("utf-8");
                     const messageText = typeof payload === 'string' ? payload : decoder.decode(payload);
                     const message = JSON.parse(messageText);
@@ -953,7 +961,6 @@
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
                 data.senderId = myClientId;
-                // QoS 0 предпочтительнее для реалтайм-клиента в браузере
                 mqttClient.publish(roomTopic, JSON.stringify(data), { qos: 0 });
             }
         }
@@ -970,7 +977,6 @@
                         } else {
                             log(`Игрок [${msg.name}] переподключился к лобби.`, 'system');
                         }
-                        // Всегда высылаем полный актуальный снимок состояния гостю при его подключении
                         sendStateSyncPayload();
                     }
                     break;
@@ -1009,7 +1015,6 @@
                     break;
 
                 case 'REQUEST_FIRE':
-                    // Выстрел по запросу Гостя (выполняется только на стороне Дилера для контроля состояния)
                     if (amIHost()) {
                         const expectedShooter = players[currentPlayerIndex];
                         if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
@@ -1025,7 +1030,6 @@
                     break;
 
                 case 'TRIGGER_FIRE':
-                    // Синхронизируем состояние каморы перед выстрелом, чтобы избежать расхождений из-за пинга
                     activeIndex = msg.activeIndex;
                     chambers = msg.chambers;
                     currentPlayerIndex = msg.currentPlayerIndex;
@@ -1087,7 +1091,7 @@
                     if (startGameBtn) startGameBtn.classList.remove('hidden');
                     document.getElementById('control-panel-title').textContent = "Управление (Вы Дилер)";
                 } else {
-                    if (startGameBtn) startGameBtn.classList.add('hidden'); // Гость не должен видеть кнопку запуска
+                    if (startGameBtn) startGameBtn.classList.add('hidden'); 
                     if (!isGameSessionActive) {
                         if (dealerBox) dealerBox.classList.remove('hidden');
                         if (visualBox) visualBox.classList.add('hidden');
@@ -1136,7 +1140,6 @@
             showScreen('game');
             document.getElementById('session-label').innerHTML = 'Локальная дуэль (Hot-Seat)';
             
-            // Настройка лобби и сброс кнопки
             document.getElementById('lobby-panel').classList.remove('hidden');
             document.getElementById('btn-start-game').classList.remove('hidden');
             document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
@@ -1145,7 +1148,6 @@
             document.getElementById('cylinder-visual-box').classList.add('hidden');
             document.getElementById('wait-message-box').classList.add('hidden');
 
-            // Восстанавливаем кнопки быстрого снаряжения в подготовке
             document.getElementById('btn-load-1').classList.remove('hidden');
             document.getElementById('btn-load-3').classList.remove('hidden');
             document.getElementById('btn-extract').classList.remove('hidden');
@@ -1204,7 +1206,6 @@
                 }
                 isGameSessionActive = true;
                 
-                // Принудительно закрываем барабан, чтобы игроки не застревали в режиме подготовки
                 isCylinderClosed = true;
                 applyCylinderCoverState();
 
@@ -1217,7 +1218,6 @@
                 isGameSessionActive = true;
                 currentPlayerIndex = 0;
                 
-                // Скрываем настройку лобби и открываем барабан
                 document.getElementById('lobby-panel').classList.add('hidden');
                 document.getElementById('cylinder-visual-box').classList.remove('hidden');
                 document.getElementById('btn-start-game').classList.add('hidden');
@@ -1226,10 +1226,8 @@
                 document.getElementById('btn-extract').classList.add('hidden');
                 document.getElementById('quick-action-row').classList.add('hidden');
                 
-                // Показываем кнопку сброса дуэли во время игры
                 document.getElementById('btn-reset-lobby').classList.remove('hidden');
 
-                // Прямой вызов скрытия патронов, чтобы избежать бага с инверсией вызова toggleCylinder()
                 isCylinderClosed = true;
                 applyCylinderCoverState();
                 log('Оффлайн раунд начат. Дилер скрыл каморы.', 'system');
@@ -1293,10 +1291,7 @@
 
             const isHost = amIHost();
             document.getElementById('btn-toggle-cylinder').disabled = !isHost;
-            
-            // Барабан может крутить Хост в любое время или Гость, когда настал именно его ход во время активной игры
             document.getElementById('btn-spin').disabled = !(isHost || (isOnlineMode && isMyTurn && isCylinderClosed && isGameSessionActive));
-            
             document.getElementById('btn-load-1').disabled = !isHost;
             document.getElementById('btn-load-3').disabled = !isHost;
             document.getElementById('btn-extract').disabled = !isHost;
@@ -1370,7 +1365,6 @@
                 });
                 activeIndex = nextChamber;
                 
-                // Только хост отсылает полный слепок состояния во избежание десинхронизации
                 if (amIHost()) {
                     sendStateSyncPayload();
                 }
@@ -1428,7 +1422,6 @@
 
             if (isOnlineMode) {
                 if (amIHost()) {
-                    // Хост вещает выстрел всем гостям
                     sendNetworkPayload({ 
                         type: 'TRIGGER_FIRE',
                         activeIndex: activeIndex,
@@ -1437,9 +1430,8 @@
                     });
                     executeFireSequence();
                 } else {
-                    // Гость делает запрос выстрела Хосту
                     sendNetworkPayload({ type: 'REQUEST_FIRE' });
-                    isAnimating = true; // Блокировка кнопки до подтверждения сетевого пакета
+                    isAnimating = true; 
                 }
             } else {
                 executeFireSequence();
@@ -1483,20 +1475,17 @@
                     document.getElementById('muzzle-flash').classList.add('flash-active');
                     document.body.classList.add('shake-screen');
 
-                    chambers[activeIndex] = 2; // гильза отстрелена
+                    chambers[activeIndex] = 2; 
                     if (shooter) shooter.isAlive = false;
 
-                    // Мгновенное обновление статуса на "Умер" в табличке перед открытием оверлея
                     updatePlayersUI(); 
 
                     log(`[${shooter ? shooter.name : 'Игрок'}] - СМЕРТЕЛЬНЫЙ ВЫСТРЕЛ!`, 'danger');
 
-                    // Хост синхронизирует финальное состояние с другими игроками после попадания
                     if (isOnlineMode && amIHost()) {
                         sendStateSyncPayload();
                     }
 
-                    // Моментальный показ полностью непрозрачного оверлея исхода
                     setTimeout(() => {
                         handleShotOutcome(shooter);
                     }, 150);
@@ -1540,7 +1529,6 @@
             currentPlayerIndex = nextIndex;
             updatePlayersUI();
 
-            // Хост отправляет финальную синхронизацию после переключения очереди, чтобы Гость разблокировал кнопку выстрела
             if (isOnlineMode && amIHost()) {
                 sendStateSyncPayload();
             }
@@ -1565,7 +1553,6 @@
                 title.textContent = "ПОБЕДИТЕЛЬ!";
                 title.className = "text-5xl font-black text-emerald-500 tracking-wider mb-4 drop-shadow-[0_4px_10px_rgba(16,185,129,0.4)]";
                 
-                // Оверлей дуэли с выделенным блоком для отображения предложений
                 msg.innerHTML = `
                     <div class="text-gray-100 text-sm mb-6 uppercase tracking-wider leading-relaxed">
                         Игрок <span class="text-red-500 font-bold">${deadPlayer ? deadPlayer.name : 'Игрок'}</span> застрелился.<br><br>Дуэль завершена! Победитель: <span class="text-emerald-400 font-bold text-xl">${winner.name}</span>
@@ -1575,14 +1562,12 @@
 
                 if (isOnlineMode) {
                     if (isHost) {
-                        // Дилер может сразу перезапустить игру
                         btn.textContent = "Новый раунд";
                         btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
                         btn.onclick = () => {
                             resetRoundNetwork();
                         };
                     } else {
-                        // Гость отправляет запрос переигровки
                         if (proposedReplayPlayers.some(p => p.id === myClientId)) {
                             btn.textContent = "Предложение отправлено";
                             btn.disabled = true;
@@ -1603,7 +1588,6 @@
                     };
                 }
 
-                // Рендерим предложения, пришедшие по сети до открытия оверлея
                 const noticesContainer = document.getElementById('replay-notices-container');
                 if (noticesContainer) {
                     proposedReplayPlayers.forEach(p => {
@@ -1667,7 +1651,6 @@
             btn.disabled = true;
             btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
 
-            // Выводим плашку локально у себя в оверлее и заносим в массив
             if (!proposedReplayPlayers.some(p => p.id === myClientId)) {
                 proposedReplayPlayers.push({ id: myClientId, name: myName });
             }
@@ -1776,15 +1759,21 @@
 
             players.forEach(p => p.isAlive = true);
             currentPlayerIndex = 0;
-            proposedReplayPlayers = []; // Сброс списка переигровок для новой сессии
+            proposedReplayPlayers = []; 
 
             document.getElementById('btn-reset-lobby').classList.add('hidden');
 
             if (isOnlineMode) {
                 applySyncedVisualState();
                 
-                // Кнопка приглашения добавлена в session-label
-                document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">✉️ Пригласить</button> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
+                // Динамическое обновление заголовка сессии кнопкой "Пригласить"
+                document.getElementById('session-label').innerHTML = `
+                    Сетевая комната: 
+                    <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> 
+                    <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">
+                        ✉️ Пригласить
+                    </button>
+                `;
             } else {
                 document.getElementById('lobby-panel').classList.remove('hidden');
                 document.getElementById('cylinder-visual-box').classList.add('hidden');
@@ -1812,37 +1801,6 @@
 
             isAnimating = false;
             updateRisk();
-        }
-
-        function applySyncedVisualState() {
-            renderChambers();
-            applyCylinderCoverState();
-            updatePlayersUI();
-            
-            const dealerBox = document.getElementById('wait-message-box');
-            const visualBox = document.getElementById('cylinder-visual-box');
-            const startGameBtn = document.getElementById('btn-start-game');
-            
-            if (isOnlineMode) {
-                if (amIHost()) {
-                    if (dealerBox) dealerBox.classList.add('hidden');
-                    if (visualBox) visualBox.classList.remove('hidden');
-                    if (startGameBtn) startGameBtn.classList.remove('hidden');
-                    document.getElementById('control-panel-title').textContent = "Управление (Вы Дилер)";
-                } else {
-                    if (startGameBtn) startGameBtn.classList.add('hidden'); // Гость не должен видеть кнопку запуска
-                    if (!isGameSessionActive) {
-                        if (dealerBox) dealerBox.classList.remove('hidden');
-                        if (visualBox) visualBox.classList.add('hidden');
-                    } else {
-                        if (dealerBox) dealerBox.classList.add('hidden');
-                        if (visualBox) visualBox.classList.remove('hidden');
-                    }
-                    document.getElementById('control-panel-title').textContent = "Панель зрителя";
-                }
-            } else {
-                if (startGameBtn) startGameBtn.classList.remove('hidden');
-            }
         }
 
         function exitToMainMenu() {
