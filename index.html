@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Сетевой симулятор револьвера .357</title>
+    
+    <!-- Настройки превью для Telegram (Open Graph) -->
+    <meta property="og:title" content="🔫 Револьвер .357 Онлайн">
+    <meta property="og:description" content="Прими вызов в русской рулетке онлайн! Заходи в мою комнату, крути барабан и испытай удачу.">
+    <meta property="og:type" content="website">
+
     <!-- Подключение Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Быстрая стабильная версия MQTT с кэшируемого CDN -->
@@ -334,7 +340,6 @@
                         <circle cx="110" cy="110" r="30" fill="url(#polished-steel)" stroke="#1a1a1e" stroke-width="1.5"/>
                         <circle cx="110" cy="110" r="11" fill="#050506" stroke="#1a1a1e" stroke-width="1"/>
 
-                        <!-- Каморы -->
                         <g id="cylinder-chambers-group" style="transform-origin: 110px 110px;">
                             <!-- Chamber 0 -->
                             <g id="chamber-0" onclick="clickChamber(0)" class="cursor-pointer group">
@@ -815,6 +820,27 @@
             triggerHaptic('spin');
         }
 
+        // --- ФУНКЦИЯ ОТПРАВКИ КРАСИВОГО ПРИГЛАШЕНИЯ ЧЕРЕЗ TELEGRAM ---
+
+        function shareRoomLink() {
+            if (!roomId) return;
+            
+            // ВНИМАНИЕ: Замените эти значения на юзернейм вашего бота (без @) и short name приложения из BotFather!
+            const botUsername = "your_bot_username"; 
+            const appShortName = "play";          
+            
+            const inviteLink = `https://t.me/${botUsername}/${appShortName}?startapp=${roomId}`;
+            const shareText = `🔫 Принимай вызов в игре Revolver .357! Я создал комнату #${roomId}. Заходи, сыграем в русскую рулетку онлайн!`;
+            
+            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(shareText)}`;
+            
+            if (tg) {
+                tg.openTelegramLink(shareUrl); // Нативно открывает окно выбора контактов в Telegram
+            } else {
+                window.open(shareUrl, '_blank'); // Резервный запуск в обычном браузере
+            }
+        }
+
         // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT) ---
 
         function createOnlineRoom() {
@@ -837,7 +863,14 @@
             window.location.hash = roomId;
 
             showScreen('game');
-            document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
+            document.getElementById('session-label').innerHTML = `
+                Сетевая комната: 
+                <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> 
+                <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">
+                    ✉️ Пригласить
+                </button>
+                <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase ml-1">(нажмите для копирования)</span>
+            `;
             
             document.getElementById('lobby-panel').classList.add('hidden');
             document.getElementById('cylinder-visual-box').classList.remove('hidden');
@@ -900,11 +933,10 @@
 
             mqttClient.on('message', (topic, payload) => {
                 try {
-                    // Используем TextDecoder вместо payload.toString(), чтобы избежать сбоев разбора JSON на смартфонах и в Telegram WebApp
+                    // Используем TextDecoder вместо payload.toString(), чтобы избежать сбоев декодирования JSON на смартфонах и внутри TG
                     const decoder = new TextDecoder("utf-8");
                     const messageText = typeof payload === 'string' ? payload : decoder.decode(payload);
                     const message = JSON.parse(messageText);
-
                     if (message.senderId === myClientId) return; 
                     handleIncomingNetworkMessage(message);
                 } catch (e) {
@@ -1035,7 +1067,7 @@
                 players: players,
                 chambers: chambers,
                 activeIndex: activeIndex,
-                isCylinderClosed: isCylinderClosed,
+                isCylinderClosed = isCylinderClosed,
                 currentPlayerIndex: currentPlayerIndex,
                 isGameSessionActive: isGameSessionActive
             });
@@ -1753,7 +1785,14 @@
 
             if (isOnlineMode) {
                 applySyncedVisualState();
-                document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
+                document.getElementById('session-label').innerHTML = `
+                    Сетевая комната: 
+                    <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> 
+                    <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">
+                        ✉️ Пригласить
+                    </button>
+                    <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase ml-1">(нажмите для копирования)</span>
+                `;
             } else {
                 document.getElementById('lobby-panel').classList.remove('hidden');
                 document.getElementById('cylinder-visual-box').classList.add('hidden');
