@@ -900,7 +900,11 @@
 
             mqttClient.on('message', (topic, payload) => {
                 try {
-                    const message = JSON.parse(payload.toString());
+                    // Используем TextDecoder вместо payload.toString(), чтобы избежать сбоев разбора JSON на смартфонах и в Telegram WebApp
+                    const decoder = new TextDecoder("utf-8");
+                    const messageText = typeof payload === 'string' ? payload : decoder.decode(payload);
+                    const message = JSON.parse(messageText);
+
                     if (message.senderId === myClientId) return; 
                     handleIncomingNetworkMessage(message);
                 } catch (e) {
@@ -1049,18 +1053,18 @@
             
             if (isOnlineMode) {
                 if (amIHost()) {
-                    dealerBox.classList.add('hidden');
-                    visualBox.classList.remove('hidden');
+                    if (dealerBox) dealerBox.classList.add('hidden');
+                    if (visualBox) visualBox.classList.remove('hidden');
                     if (startGameBtn) startGameBtn.classList.remove('hidden');
                     document.getElementById('control-panel-title').textContent = "Управление (Вы Дилер)";
                 } else {
                     if (startGameBtn) startGameBtn.classList.add('hidden'); // Гость не должен видеть кнопку запуска
                     if (!isGameSessionActive) {
-                        dealerBox.classList.remove('hidden');
-                        visualBox.classList.add('hidden');
+                        if (dealerBox) dealerBox.classList.remove('hidden');
+                        if (visualBox) visualBox.classList.add('hidden');
                     } else {
-                        dealerBox.classList.add('hidden');
-                        visualBox.classList.remove('hidden');
+                        if (dealerBox) dealerBox.classList.add('hidden');
+                        if (visualBox) visualBox.classList.remove('hidden');
                     }
                     document.getElementById('control-panel-title').textContent = "Панель зрителя";
                 }
