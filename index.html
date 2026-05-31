@@ -5,11 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Сетевой симулятор револьвера .357</title>
 
-    <!-- Настройки превью для Telegram (Open Graph) -->
+    <!-- Настройки превью для Telegram (Open Graph) - Готовая стильная заставка по умолчанию -->
     <meta property="og:title" content="🔫 Револьвер .357 Онлайн">
-    <meta property="og:description" content="Прими вызов в русской рулетке онлайн! Заходи в мою комнату, крути барабан и испытай удачу.">
-    <!-- Укажите ссылку на картинку, которая будет отображаться при отправке прямой ссылки на сайт -->
-    <meta property="og:image" content="https://твой_логин.github.io/имя_репозитория/preview.jpg"> 
+    <meta property="og:description" content="Прими вызов в русской рулетке онлайн! Заходи в мою комнату, крути барабан и испытатай удачу.">
+    <meta property="og:image" content="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=640"> 
     <meta property="og:type" content="website">
 
     <!-- Подключение Telegram WebApp SDK -->
@@ -768,25 +767,116 @@
             riskPercentageEl.textContent = `${risk}%`;
         }
 
-        // --- ФУНКЦИЯ ПОДЕЛИТЬСЯ И КОПИРОВАНИЕ ---
+        // --- АВТОНОМНАЯ СИСТЕМА ПРИГЛАШЕНИЙ (САМОНАСТРОЙКА) ---
+
+        function showBotLinkSetupModal() {
+            if (document.getElementById('bot-link-modal')) return;
+
+            const modal = document.createElement('div');
+            modal.id = 'bot-link-modal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4';
+            modal.innerHTML = `
+                <div class="bg-zinc-950 border-2 border-red-600 rounded-lg p-6 max-w-sm w-full text-center space-y-4 shadow-[0_0_30px_rgba(220,38,38,0.2)]">
+                    <h3 class="text-sm font-bold text-red-500 uppercase tracking-widest">Настройка приглашений</h3>
+                    <p class="text-[11px] text-gray-400 uppercase leading-relaxed text-left">
+                        Выберите, какой тип ссылки отправлять друзьям для входа в игру:
+                    </p>
+                    
+                    <div class="space-y-2">
+                        <button onclick="saveBotLinkFromModal('web')" class="w-full bg-gray-800 hover:bg-gray-750 text-gray-200 text-[10px] py-2 px-3 rounded uppercase border border-gray-700 transition-colors">
+                            🌐 Использовать веб-ссылку
+                        </button>
+                        <p class="text-[9px] text-gray-500 text-left uppercase pl-2 leading-tight">Отправит прямую ссылку на текущий сайт. Работает без Telegram-ботов.</p>
+                    </div>
+
+                    <div class="relative flex py-1 items-center">
+                        <div class="flex-grow border-t border-gray-800"></div>
+                        <span class="flex-shrink mx-2 text-gray-600 text-[9px] uppercase">или подключите бота</span>
+                        <div class="flex-grow border-t border-gray-800"></div>
+                    </div>
+
+                    <div class="space-y-2 text-left">
+                        <label class="text-[9px] text-gray-500 uppercase pl-1">Ссылка на ваше Telegram-приложение:</label>
+                        <input type="text" id="modal-bot-link-input" placeholder="https://t.me/имя_бота/приложение" 
+                               class="w-full bg-black border border-gray-800 rounded px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-red-500">
+                        <p class="text-[9px] text-gray-500 uppercase pl-1 leading-normal">
+                            Где её взять? В Telegram у @BotFather после настройки /newapp.
+                        </p>
+                    </div>
+
+                    <div class="flex gap-2 pt-2">
+                        <button onclick="saveBotLinkFromModal('custom')" class="flex-1 bg-red-800 hover:bg-red-750 text-white text-[10px] font-bold py-2.5 px-3 rounded uppercase transition-colors">
+                            Сохранить бота
+                        </button>
+                        <button onclick="closeBotLinkModal()" class="flex-1 bg-gray-900 hover:bg-gray-800 text-gray-400 text-[10px] font-bold py-2.5 px-3 rounded uppercase transition-colors border border-gray-800">
+                            Отмена
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function saveBotLinkFromModal(type) {
+            if (type === 'web') {
+                localStorage.setItem('tg_bot_link', 'web');
+                closeBotLinkModal();
+                log('Выбрана стандартная веб-ссылка для приглашений.', 'success');
+                shareRoomLink();
+            } else {
+                const input = document.getElementById('modal-bot-link-input');
+                let val = input.value.trim();
+                if (!val) {
+                    alert("Пожалуйста, введите ссылку на бота или выберите веб-ссылку!");
+                    return;
+                }
+                if (!val.startsWith('http://') && !val.startsWith('https://') && !val.startsWith('t.me/')) {
+                    val = 'https://' + val;
+                }
+                localStorage.setItem('tg_bot_link', val);
+                closeBotLinkModal();
+                log('Telegram-бот для приглашений успешно привязан!', 'success');
+                shareRoomLink();
+            }
+        }
+
+        function closeBotLinkModal() {
+            const modal = document.getElementById('bot-link-modal');
+            if (modal) {
+                modal.remove();
+            }
+        }
 
         function shareRoomLink() {
             if (!roomId) return;
             
-            // ВНИМАНИЕ: Замените эти значения на юзернейм вашего созданного бота и short name вашего Mini App!
-            const botUsername = "revolver_357_bot"; // Например: revolver_357_bot
-            const appShortName = "play";            // Короткое имя приложения, указанное в BotFather
+            let botLink = localStorage.getItem('tg_bot_link');
+            if (!botLink) {
+                showBotLinkSetupModal();
+                return;
+            }
             
-            const inviteLink = `https://t.me/${botUsername}/${appShortName}?startapp=${roomId}`;
-            const shareText = `🔫 Я создал комнату в Revolver .357! Принимай вызов, сыграем в русскую рулетку онлайн!`;
+            let inviteLink = "";
+            if (botLink === 'web') {
+                // Прямая веб-ссылка на сайт
+                inviteLink = window.location.origin + window.location.pathname + "#" + roomId;
+            } else {
+                // Ссылка через нативного бота
+                inviteLink = botLink;
+                if (inviteLink.includes('?')) {
+                    inviteLink += `&startapp=${roomId}`;
+                } else {
+                    inviteLink += `?startapp=${roomId}`;
+                }
+            }
             
-            // Формируем стандартную ссылку Telegram для отправки
+            const shareText = `🔫 Я создал комнату в Револьвер .357! Принимай вызов, сыграем по сети!`;
             const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(shareText)}`;
             
             if (tg) {
-                tg.openTelegramLink(shareUrl); // Открывает нативный диалог выбора чата внутри Telegram Mini App
+                tg.openTelegramLink(shareUrl); 
             } else {
-                window.open(shareUrl, '_blank'); // Резервный вариант для десктопного / обычного браузера
+                window.open(shareUrl, '_blank'); 
             }
         }
 
@@ -869,12 +959,15 @@
 
             showScreen('game');
             
-            // Динамическое обновление заголовка сессии кнопкой "Пригласить"
+            // Динамическое обновление заголовка сессии кнопкой "Пригласить" и кнопкой смены ссылки "⚙️"
             document.getElementById('session-label').innerHTML = `
                 Сетевая комната: 
                 <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> 
                 <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">
                     ✉️ Пригласить
+                </button>
+                <button onclick="showBotLinkSetupModal()" title="Настроить тип ссылки" class="ml-1 px-1 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-[9px] font-bold rounded uppercase">
+                    ⚙️
                 </button>
             `;
             
@@ -1766,12 +1859,15 @@
             if (isOnlineMode) {
                 applySyncedVisualState();
                 
-                // Динамическое обновление заголовка сессии кнопкой "Пригласить"
+                // Динамическое обновление заголовка сессии кнопкой "Пригласить" и кнопкой смены ссылки "⚙️"
                 document.getElementById('session-label').innerHTML = `
                     Сетевая комната: 
                     <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> 
                     <button onclick="shareRoomLink()" class="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold rounded uppercase">
                         ✉️ Пригласить
+                    </button>
+                    <button onclick="showBotLinkSetupModal()" title="Настроить тип ссылки" class="ml-1 px-1 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-[9px] font-bold rounded uppercase">
+                        ⚙️
                     </button>
                 `;
             } else {
