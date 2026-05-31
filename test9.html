@@ -1,0 +1,1836 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Сетевой симулятор револьвера .357</title>
+    <!-- Подключение Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Быстрая стабильная версия MQTT с кэшируемого CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <!-- Подключение СТАТИЧЕСКОГО Tailwind CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            background-color: #080707;
+            background-image: radial-gradient(circle at center, #141212 0%, #080707 100%);
+        }
+
+        /* Анимация отдачи оружия */
+        @keyframes recoil {
+            0% { transform: rotate(0deg) translate(0, 0); }
+            12% { transform: rotate(-22deg) translate(-32px, -20px); }
+            30% { transform: rotate(-24deg) translate(-35px, -22px); }
+            100% { transform: rotate(0deg) translate(0, 0); }
+        }
+        .recoil-active {
+            animation: recoil 0.6s cubic-bezier(0.08, 0.82, 0.15, 1) forwards;
+        }
+
+        /* Тряска при осечке */
+        @keyframes misfire-shake {
+            0%, 100% { transform: translate(0, 0); }
+            25% { transform: translate(-3px, 1.5px); }
+            50% { transform: translate(3px, -1.5px); }
+            75% { transform: translate(-1.5px, -0.5px); }
+        }
+        .misfire-active {
+            animation: misfire-shake 0.18s ease-in-out;
+        }
+
+        /* Вспышка пламени */
+        @keyframes muzzle-flash {
+            0% { opacity: 0; transform: scale(0.2) translate(0, 0); }
+            8% { opacity: 1; transform: scale(1.8) translate(15px, 0); }
+            100% { opacity: 0; transform: scale(1) translate(0, 0); }
+        }
+        .flash-active {
+            animation: muzzle-flash 0.15s ease-out forwards;
+        }
+
+        /* Тряска экрана */
+        @keyframes screen-shake {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            10% { transform: translate(-10px, 7px) rotate(-1.5deg); }
+            30% { transform: translate(10px, -7px) rotate(1.5deg); }
+            50% { transform: translate(-6px, -4px) rotate(-0.8deg); }
+            70% { transform: translate(6px, 4px) rotate(0.8deg); }
+            90% { transform: translate(-3px, 1px) rotate(0deg); }
+        }
+        .shake-screen {
+            animation: screen-shake 0.45s ease-in-out;
+        }
+
+        .spin-transition {
+            transition: transform 3.5s cubic-bezier(0.1, 0.85, 0.2, 1);
+        }
+
+        .custom-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.01);
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: rgba(220, 38, 38, 0.3);
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="min-h-screen text-gray-300 flex flex-col justify-between p-4 overflow-x-hidden select-none">
+
+    <!-- Абсолютно непрозрачный оверлей исхода раунда (Смерть / Победа) -->
+    <div id="game-overlay" class="fixed inset-0 bg-black opacity-0 pointer-events-none transition-opacity duration-300 z-50 flex items-center justify-center p-4">
+        <div class="text-center p-8 max-w-md w-full bg-zinc-900 border-2 border-red-600 rounded-lg shadow-[0_0_50px_rgba(220,38,38,0.35)]">
+            <h1 id="overlay-title" class="text-5xl font-bold text-red-600 tracking-wider mb-4 drop-shadow-[0_4px_10px_rgba(239,68,68,0.4)]">ГРОХОТ ВЫСТРЕЛА</h1>
+            <div id="overlay-message" class="text-gray-100 mb-6 font-semibold uppercase tracking-wide">Игрок выбывает из игры.</div>
+            <div class="flex flex-col gap-4 justify-center">
+                <button id="overlay-btn" class="w-full px-8 py-4 bg-red-600 hover:bg-red-500 text-white font-extrabold rounded-md shadow-[0_0_20px_rgba(239,68,68,0.6)] hover:shadow-[0_0_30px_rgba(239,68,68,0.95)] transition-all duration-200 uppercase text-sm tracking-widest border border-red-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                    Продолжить раунд
+                </button>
+                <button id="overlay-exit-btn" onclick="exitToMainMenuFromOverlay()" class="w-full px-8 py-4 bg-red-700 hover:bg-red-600 text-white border-2 border-red-500 font-extrabold rounded-md shadow-[0_0_15px_rgba(239,68,68,0.4)] hover:shadow-[0_0_25px_rgba(239,68,68,0.7)] transition-all duration-200 uppercase text-sm tracking-widest cursor-pointer">
+                    В главное меню
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Заголовок -->
+    <header class="w-full max-w-5xl mx-auto flex justify-between items-center border-b border-gray-800 pb-4 mb-4">
+        <div>
+            <h1 class="text-xl font-bold tracking-widest text-gray-100 flex items-center gap-2">
+                <span class="w-3 h-3 bg-red-600 rounded-full inline-block"></span>
+                REVOLVER .357 ONLINE
+            </h1>
+            <p class="text-[10px] text-gray-500 uppercase">Оптимизированный мультиплеер по сети и хотсит</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="network-status" class="px-2 py-0.5 text-[9px] bg-gray-800 text-gray-400 border border-gray-700 rounded uppercase font-bold">Сеть: Оффлайн</span>
+            <label class="text-[10px] text-gray-400 flex items-center gap-2">
+                ГРОМКОСТЬ:
+                <input type="range" id="volume-slider" min="0" max="1" step="0.1" value="0.5" class="w-16 h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-red-600">
+            </label>
+        </div>
+    </header>
+
+    <!-- Безопасный центрированный контейнер для экранов -->
+    <div class="flex-grow flex items-center justify-center w-full py-2">
+
+        <!-- ЭКРАН 1: ГЛАВНОЕ МЕНЮ -->
+        <div id="screen-menu" class="w-full max-w-md bg-gray-900 bg-opacity-95 border border-gray-850 p-6 rounded-lg text-center shadow-2xl space-y-6">
+            <div>
+                <h2 class="text-lg font-bold text-gray-100 tracking-wider">ГЛАВНОЕ МЕНЮ</h2>
+                <p class="text-xs text-gray-500 uppercase mt-1">Выберите формат проведения дуэли</p>
+            </div>
+
+            <div class="space-y-3">
+                <button onclick="startOfflineMode()" class="w-full bg-gray-800 hover:bg-gray-750 border border-gray-700 text-gray-200 text-xs font-bold py-3.5 px-4 rounded uppercase tracking-wider transition-all">
+                    Локальная игра (Hot-Seat)
+                </button>
+                <div class="relative flex py-2 items-center">
+                    <div class="flex-grow border-t border-gray-850"></div>
+                    <span class="flex-shrink mx-4 text-gray-600 text-[10px] uppercase">Или Сетевая Игра</span>
+                    <div class="flex-grow border-t border-gray-850"></div>
+                </div>
+                
+                <button onclick="createOnlineRoom()" class="w-full bg-amber-700 hover:bg-amber-600 border border-amber-500 text-white text-xs font-bold py-3.5 px-4 rounded uppercase tracking-wider transition-all">
+                    Создать комнату по сети
+                </button>
+
+                <div class="flex gap-2">
+                    <input type="text" id="room-input-code" placeholder="КОД КОМНАТЫ" class="w-2/3 bg-black border border-gray-800 rounded px-3 py-3 text-xs text-gray-200 uppercase tracking-widest text-center focus:outline-none focus:border-amber-500">
+                    <button onclick="joinOnlineRoom()" class="w-1/3 bg-gray-800 hover:bg-gray-750 border border-gray-700 text-gray-200 text-xs font-bold py-3 px-4 rounded uppercase transition-all">
+                        Войти
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ЭКРАН 2: ЭКРАН ИГРЫ -->
+        <div id="screen-game" class="hidden w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+            
+            <!-- Левая панель: Оружие -->
+            <div class="lg:col-span-7 bg-gray-900 bg-opacity-40 border border-gray-850 p-6 flex flex-col justify-between relative rounded-lg overflow-hidden min-h-[360px]">
+                <div id="session-label" class="absolute top-2 left-3 text-[10px] text-gray-600 tracking-widest uppercase">Сессия</div>
+                
+                <div class="flex justify-between items-center z-10 pt-4">
+                    <div class="flex gap-2 flex-wrap">
+                        <span id="badge-lock" class="px-2 py-0.5 text-[9px] bg-red-950 text-red-400 border border-red-900/40 rounded uppercase font-bold">Снят с предохранителя</span>
+                        <span id="badge-cylinder" class="px-2 py-0.5 text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-900/40 rounded uppercase font-bold">Барабан открыт</span>
+                        <span class="px-2 py-0.5 text-[9px] bg-gray-800 text-gray-400 border border-gray-700 rounded uppercase font-bold">Камора: <span id="active-chamber-num">#1</span></span>
+                        <span class="px-2 py-0.5 text-[9px] bg-gray-800 text-gray-400 border border-gray-700 rounded uppercase font-bold">Риск: <span id="risk-percentage">0%</span></span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[10px] text-gray-500">ОЧЕРЕДЬ ХОДА:</span>
+                        <span id="active-player-name" class="text-sm font-bold text-amber-500 block">Ожидание...</span>
+                    </div>
+                </div>
+
+                <!-- Изображение револьвера (SVG) -->
+                <div class="flex justify-center items-center my-6 relative h-52">
+                    <svg id="muzzle-flash" class="absolute left-[445px] top-[26px] w-28 h-28 pointer-events-none opacity-0 z-20" viewBox="0 0 100 100">
+                        <polygon points="10,50 35,38 20,28 70,42 45,10 95,50 45,90 70,58 20,72 35,62" fill="url(#flash-gradient)"/>
+                        <defs>
+                            <radialGradient id="flash-gradient" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#ffffff" />
+                                <stop offset="25%" stop-color="#fff0aa" />
+                                <stop offset="55%" stop-color="#ff7b00" />
+                                <stop offset="100%" stop-color="#ff2200" stop-opacity="0" />
+                            </radialGradient>
+                        </defs>
+                    </svg>
+
+                    <svg id="revolver-svg" class="w-full max-w-[460px] h-full filter drop-shadow-[0_12px_20px_rgba(0,0,0,0.85)]" viewBox="0 0 550 250">
+                        <defs>
+                            <linearGradient id="polished-steel" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stop-color="#2d3038" />
+                                <stop offset="15%" stop-color="#555a66" />
+                                <stop offset="30%" stop-color="#1c1d22" />
+                                <stop offset="50%" stop-color="#707685" />
+                                <stop offset="65%" stop-color="#8a92a5" />
+                                <stop offset="80%" stop-color="#23252a" />
+                                <stop offset="100%" stop-color="#3d404b" />
+                            </linearGradient>
+                            <linearGradient id="dark-steel-shadow" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#1d1e22" />
+                                <stop offset="50%" stop-color="#111215" />
+                                <stop offset="100%" stop-color="#08080a" />
+                            </linearGradient>
+                            <linearGradient id="wood-base" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#965f30" />
+                                <stop offset="40%" stop-color="#6e421f" />
+                                <stop offset="75%" stop-color="#46250e" />
+                                <stop offset="100%" stop-color="#1d0c03" />
+                            </linearGradient>
+                            <radialGradient id="gold-medallion" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#ffe675" />
+                                <stop offset="70%" stop-color="#c6951b" />
+                                <stop offset="100%" stop-color="#694a02" />
+                            </radialGradient>
+                            <pattern id="grip-checkering" width="5" height="5" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+                                <line x1="0" y1="0" x2="0" y2="5" stroke="#1d0c03" stroke-width="1"/>
+                                <line x1="0" y1="0" x2="5" y2="0" stroke="#1d0c03" stroke-width="1"/>
+                            </pattern>
+                        </defs>
+
+                        <!-- Группа оружия -->
+                        <g id="gun-body-group" style="transform-origin: 140px 190px;">
+                            <g>
+                                <path d="M 120,130 C 108,160 88,210 115,245 C 125,255 160,245 170,230 C 180,205 165,165 150,135 Z" fill="url(#wood-base)" stroke="#09090a" stroke-width="2.5"/>
+                                <path d="M 125,155 C 122,175 108,212 128,235 C 132,239 146,236 151,228 C 158,210 148,180 140,158 Z" fill="url(#grip-checkering)" opacity="0.8"/>
+                                <circle cx="146" cy="198" r="5" fill="url(#gold-medallion)" stroke="#302103" stroke-width="0.5" />
+                            </g>
+
+                            <path d="M 130,95 L 210,95 L 210,140 L 150,175 L 130,130 Z" fill="url(#polished-steel)" stroke="#0f1012" stroke-width="1.5"/>
+                            <path d="M 210,95 L 258,95 L 258,160 L 210,165 Z" fill="url(#polished-steel)" stroke="#0f1012" stroke-width="1.5"/>
+                            
+                            <g>
+                                <path d="M 258,95 L 450,95 L 450,125 L 258,130 Z" fill="url(#polished-steel)" stroke="#0f1012" stroke-width="1.5"/>
+                                <rect x="280" y="87" width="30" height="8" rx="1.5" fill="url(#dark-steel-shadow)" stroke="#000" stroke-width="0.5" />
+                                <rect x="330" y="87" width="35" height="8" rx="1.5" fill="url(#dark-steel-shadow)" stroke="#000" stroke-width="0.5" />
+                                <rect x="385" y="87" width="40" height="8" rx="1.5" fill="url(#dark-steel-shadow)" stroke="#000" stroke-width="0.5" />
+                                <path d="M 258,130 L 400,130 L 400,142 L 258,138 Z" fill="url(#polished-steel)" stroke="#0f1012" stroke-width="1.2"/>
+                                <path d="M 432,95 L 444,83 L 450,95 Z" fill="url(#polished-steel)" stroke="#0f1012" stroke-width="1"/>
+                            </g>
+                            
+                            <g>
+                                <path d="M 175,175 C 175,212 225,212 230,175 Z" fill="none" stroke="url(#polished-steel)" stroke-width="6.5" stroke-linecap="round"/>
+                                <circle cx="238" cy="172" r="3" fill="url(#polished-steel)" stroke="#050505" stroke-width="0.8"/>
+                                <line x1="236" y1="170" x2="240" y2="174" stroke="#000" stroke-width="1"/>
+                                <path d="M 156,134 L 168,134 L 164,142 L 152,142 Z" fill="url(#polished-steel)" stroke="#0f1012" stroke-width="1"/>
+                            </g>
+                            
+                            <g id="gun-hammer" style="transform-origin: 135px 105px; transition: transform 0.12s cubic-bezier(0.25, 1, 0.5, 1);">
+                                <path d="M 135,105 C 130,88 114,84 107,72 C 114,64 128,72 138,86 L 141,105 Z" fill="url(#polished-steel)" stroke="#0a0a0c" stroke-width="1.2"/>
+                                <circle cx="120" cy="78" r="1.5" fill="#111"/>
+                            </g>
+
+                            <g id="gun-trigger" style="transform-origin: 200px 170px; transition: transform 0.1s ease-in-out;">
+                                <path d="M 195,170 C 195,186 204,196 210,201 C 205,191 205,179 203,170 Z" fill="url(#polished-steel)" stroke="#050505" stroke-width="1"/>
+                            </g>
+
+                            <g id="gun-cylinder-side" style="transform-origin: 210px 128px; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), filter 0.1s;">
+                                <rect x="175" y="99" width="76" height="58" rx="4" fill="url(#polished-steel)" stroke="#0a0a0c" stroke-width="2" />
+                                <rect x="185" y="103" width="55" height="9" rx="3" fill="url(#dark-steel-shadow)" stroke="#1a1a1e" stroke-width="0.8"/>
+                                <rect x="185" y="123" width="55" height="10" rx="3" fill="url(#dark-steel-shadow)" stroke="#1a1a1e" stroke-width="0.8"/>
+                                <rect x="185" y="143" width="55" height="9" rx="3" fill="url(#dark-steel-shadow)" stroke="#1a1a1e" stroke-width="0.8"/>
+                            </g>
+                        </g>
+                    </svg>
+                </div>
+
+                <div class="mt-4 flex gap-4">
+                    <button id="btn-fire" onclick="fireRevolver()" class="flex-1 bg-red-800 hover:bg-red-750 border border-red-600 text-white font-bold py-3.5 px-6 rounded-md uppercase tracking-wider transition-all duration-150 shadow-lg active:scale-[0.98] text-center flex justify-center items-center gap-2">
+                        СПУСК (ВЫСТРЕЛ)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Правая панель: Снаряжение / Лобби -->
+            <div class="lg:col-span-5 bg-gray-900 bg-opacity-40 border border-gray-850 p-6 flex flex-col justify-between relative rounded-lg min-h-[360px]">
+                <div class="absolute top-2 left-3 text-[10px] text-gray-600 tracking-widest uppercase" id="control-panel-title">Снаряжение</div>
+
+                <div class="flex justify-between items-center mb-2 z-10 pt-4">
+                    <span class="text-xs text-gray-500 uppercase">Барабан</span>
+                    <span id="bullet-count" class="text-xs text-amber-500 font-bold uppercase tracking-wider">ЗАРЯЖЕНО: 0 / 6</span>
+                </div>
+
+                <!-- Зона ожидания игроков -->
+                <div id="wait-message-box" class="hidden text-center my-auto p-4 border border-gray-800 bg-black bg-opacity-40 rounded space-y-2">
+                    <span class="text-xs font-bold text-amber-500 block animate-pulse uppercase">Вы — Гость</span>
+                    <p class="text-[10px] text-gray-500 uppercase leading-relaxed">Ожидайте, пока дилер (Создатель комнаты) снарядит патроны, прокрутит барабан и начнет дуэль.</p>
+                </div>
+
+                <!-- Локальное лобби -->
+                <div id="lobby-panel" class="space-y-3 my-auto">
+                    <span class="text-[10px] text-gray-500 block uppercase">Добавление участников (2-6 игроков):</span>
+                    <div id="players-input-list" class="space-y-2 max-h-40 overflow-y-auto custom-scroll pr-1"></div>
+                    <div class="flex gap-2 pt-1">
+                        <button onclick="addPlayerField()" class="flex-1 bg-gray-800 hover:bg-gray-750 text-gray-300 text-[10px] py-1.5 rounded uppercase border border-gray-700">
+                            + Добавить
+                        </button>
+                        <button onclick="removeLastPlayerField()" class="flex-1 bg-gray-800 hover:bg-gray-750 text-gray-300 text-[10px] py-1.5 rounded uppercase border border-gray-700">
+                            - Удалить
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Барабан (вид сзади) -->
+                <div id="cylinder-visual-box" class="hidden flex justify-center items-center my-4 relative">
+                    <!-- Щиток рамки -->
+                    <div id="cylinder-cover" class="absolute inset-0 bg-stone-950 bg-opacity-95 rounded-full flex flex-col items-center justify-center border border-gray-850 z-20 transition-all duration-300 opacity-0 pointer-events-none scale-95" style="width: 200px; height: 200px; margin: auto;">
+                        <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 220 220">
+                            <circle cx="110" cy="110" r="100" fill="url(#polished-steel)" stroke="#08080a" stroke-width="2"/>
+                            <circle cx="110" cy="50" r="14" fill="#0c0c0e" stroke="#1d1e22" stroke-width="1"/>
+                            <circle cx="110" cy="50" r="2.5" fill="#000"/>
+                            <circle cx="110" cy="110" r="25" fill="#151619" stroke="#333" stroke-width="1" />
+                            <path d="M 110,95 L 115,102 M 125,110 L 118,115 M 110,125 L 105,118 M 95,110 L 102,105" stroke="#444" stroke-width="1.5" />
+                        </svg>
+                        <span class="text-[9px] text-gray-400 font-bold tracking-widest text-center px-4 z-10">БАРАБАН ЗАКРЫТ<br><span class="text-gray-500 font-normal normal-case">Патроны скрыты щитком рамы</span></span>
+                    </div>
+
+                    <!-- Торцевой вид барабана -->
+                    <svg id="cylinder-face-svg" class="w-48 h-48 spin-transition" viewBox="0 0 220 220" style="transform-origin: 110px 110px;">
+                        <defs>
+                            <radialGradient id="brass-grad" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#fff19c" />
+                                <stop offset="60%" stop-color="#dfb725" />
+                                <stop offset="100%" stop-color="#735800" />
+                            </radialGradient>
+                            <radialGradient id="copper-grad" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#ffbfa3" />
+                                <stop offset="70%" stop-color="#d16d41" />
+                                <stop offset="100%" stop-color="#733011" />
+                            </radialGradient>
+                            <radialGradient id="chamber-depth" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#040405" />
+                                <stop offset="85%" stop-color="#141416" />
+                                <stop offset="100%" stop-color="#242529" />
+                            </radialGradient>
+                        </defs>
+
+                        <circle cx="110" cy="110" r="100" fill="url(#polished-steel)" stroke="#0c0d10" stroke-width="3"/>
+                        <circle cx="110" cy="110" r="30" fill="url(#polished-steel)" stroke="#1a1a1e" stroke-width="1.5"/>
+                        <circle cx="110" cy="110" r="11" fill="#050506" stroke="#1a1a1e" stroke-width="1"/>
+
+                        <!-- Каморы -->
+                        <g id="cylinder-chambers-group" style="transform-origin: 110px 110px;">
+                            <!-- Chamber 0 -->
+                            <g id="chamber-0" onclick="clickChamber(0)" class="cursor-pointer group">
+                                <circle cx="110" cy="50" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
+                                <g id="bullet-0" class="hidden">
+                                    <circle cx="110" cy="50" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
+                                    <circle cx="110" cy="50" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
+                                    <circle id="primer-0" cx="110" cy="50" r="2" fill="#555" />
+                                </g>
+                            </g>
+                            <!-- Chamber 1 -->
+                            <g id="chamber-1" onclick="clickChamber(1)" class="cursor-pointer group">
+                                <circle cx="162" cy="80" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
+                                <g id="bullet-1" class="hidden">
+                                    <circle cx="162" cy="80" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
+                                    <circle cx="162" cy="80" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
+                                    <circle id="primer-1" cx="162" cy="80" r="2" fill="#555" />
+                                </g>
+                            </g>
+                            <!-- Chamber 2 -->
+                            <g id="chamber-2" onclick="clickChamber(2)" class="cursor-pointer group">
+                                <circle cx="162" cy="140" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
+                                <g id="bullet-2" class="hidden">
+                                    <circle cx="162" cy="140" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
+                                    <circle cx="162" cy="140" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
+                                    <circle id="primer-2" cx="162" cy="140" r="2" fill="#555" />
+                                </g>
+                            </g>
+                            <!-- Chamber 3 -->
+                            <g id="chamber-3" onclick="clickChamber(3)" class="cursor-pointer group">
+                                <circle cx="110" cy="170" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
+                                <g id="bullet-3" class="hidden">
+                                    <circle cx="110" cy="170" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
+                                    <circle cx="110" cy="170" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
+                                    <circle id="primer-3" cx="110" cy="170" r="2" fill="#555" />
+                                </g>
+                            </g>
+                            <!-- Chamber 4 -->
+                            <g id="chamber-4" onclick="clickChamber(4)" class="cursor-pointer group">
+                                <circle cx="58" cy="140" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
+                                <g id="bullet-4" class="hidden">
+                                    <circle cx="58" cy="140" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
+                                    <circle cx="58" cy="140" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
+                                    <circle id="primer-4" cx="58" cy="140" r="2" fill="#555" />
+                                </g>
+                            </g>
+                            <!-- Chamber 5 -->
+                            <g id="chamber-5" onclick="clickChamber(5)" class="cursor-pointer group">
+                                <circle cx="58" cy="80" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
+                                <g id="bullet-5" class="hidden">
+                                    <circle cx="58" cy="80" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
+                                    <circle cx="58" cy="80" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
+                                    <circle id="primer-5" cx="58" cy="80" r="2" fill="#555" />
+                                </g>
+                            </g>
+                        </g>
+                    </svg>
+                </div>
+
+                <!-- Панель управления действиями барабана -->
+                <div class="space-y-2">
+                    <div id="cylinder-action-row" class="grid grid-cols-2 gap-2">
+                        <button id="btn-toggle-cylinder" onclick="toggleCylinder()" class="bg-gray-800 hover:bg-gray-750 border border-gray-700 text-gray-200 text-[11px] font-bold py-2.5 px-3 rounded uppercase transition-colors">
+                            ОТКРЫТЬ БАРАБАН
+                        </button>
+                        <button id="btn-spin" onclick="spinCylinderHard()" class="bg-amber-700 hover:bg-amber-600 border border-amber-500 text-white text-[11px] font-bold py-2.5 px-3 rounded uppercase tracking-wider transition-all">
+                            РАСКРУТИТЬ
+                        </button>
+                    </div>
+                    <div id="quick-action-row" class="grid grid-cols-3 gap-2">
+                        <button id="btn-load-1" onclick="quickLoad(1)" class="bg-gray-900 bg-opacity-40 hover:bg-gray-800 text-[10px] py-1 border border-gray-800 rounded">1 ПАТРОН</button>
+                        <button id="btn-load-3" onclick="quickLoad(3)" class="bg-gray-900 bg-opacity-40 hover:bg-gray-800 text-[10px] py-1 border border-gray-800 rounded">3 ПАТРОНА</button>
+                        <button id="btn-extract" onclick="ejectExtractor()" class="bg-red-950 bg-opacity-40 hover:bg-red-900 hover:bg-opacity-60 border border-red-900 border-opacity-50 text-[10px] text-red-400 py-1 rounded">ЭКСТРАКТОР</button>
+                    </div>
+                    
+                    <!-- Кнопки инициации раундов -->
+                    <button id="btn-start-game" onclick="startGameSession()" class="w-full bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold py-3 px-3 rounded uppercase tracking-wider transition-all">
+                        ПОДТВЕРДИТЬ ИГРОКОВ
+                    </button>
+                    <div class="flex gap-2 w-full mt-2">
+                        <button id="btn-exit-to-menu" onclick="exitToMainMenu()" class="flex-1 bg-gray-800 hover:bg-gray-750 border border-gray-700 text-gray-400 text-[10px] font-bold py-2 px-3 rounded uppercase transition-all">
+                            Выйти в меню
+                        </button>
+                        <button id="btn-reset-lobby" onclick="resetToLobby()" class="flex-1 bg-red-950 bg-opacity-40 hover:bg-red-900 hover:bg-opacity-60 border border-red-900 border-opacity-50 text-red-400 text-[10px] font-bold py-2 px-3 rounded uppercase transition-all hidden">
+                            Сбросить дуэль
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Нижняя часть -->
+    <footer class="w-full max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-4 border-t border-gray-800 pt-4 mt-4">
+        <!-- Очередь ходов -->
+        <div class="md:col-span-5 bg-gray-900 bg-opacity-30 border border-gray-850 p-3 rounded flex flex-col justify-between">
+            <div class="text-[10px] text-gray-500 tracking-wider uppercase mb-2">ОЧЕРЕДЬ СМЕРТНИКОВ</div>
+            <div id="players-turn-list" class="space-y-1.5 my-auto max-h-[85px] overflow-y-auto custom-scroll pr-1 text-xs">
+                <div class="text-gray-500 text-center italic text-[11px] py-2">Настройте участников лобби...</div>
+            </div>
+        </div>
+
+        <!-- Консольный лог -->
+        <div class="md:col-span-7 bg-black bg-opacity-80 border border-gray-900 p-3 rounded">
+            <div class="flex justify-between items-center mb-1 text-[10px] text-gray-600">
+                <span>ЖУРНАЛ СЕССИИ</span>
+                <span onclick="clearLog()" class="cursor-pointer hover:text-gray-400">ОЧИСТИТЬ</span>
+            </div>
+            <div id="log-container" class="h-20 overflow-y-auto custom-scroll text-[11px] leading-relaxed text-gray-400 font-mono"></div>
+        </div>
+    </footer>
+
+    <script>
+        // Инициализация Telegram WebApp SDK
+        const tg = window.Telegram ? window.Telegram.WebApp : null;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+            tg.enableClosingConfirmation();
+        }
+
+        // Сетевые переменные (MQTT над WebSocket)
+        let mqttClient = null;
+        let isOnlineMode = false;
+        let roomId = null;
+        let myClientId = 'pl_' + Math.random().toString(36).substring(2, 9);
+        let myName = "Игрок";
+        let connectTimeout = null;
+
+        // Состояние локальной / сетевой игры
+        let players = [];
+        let currentPlayerIndex = 0;
+        let isGameSessionActive = false;
+        let proposedReplayPlayers = []; // Накопленный список игроков, пожелавших сыграть снова
+
+        // Состояние револьвера
+        let chambers = [0, 0, 0, 0, 0, 0]; // 0 - пусто, 1 - боевой, 2 - отстрелянная гильза
+        let activeIndex = 0; 
+        let isCylinderClosed = false; 
+        let isAnimating = false; 
+
+        let audioCtx = null;
+        let masterGain = null;
+
+        // --- ВСТРОЕННЫЙ СИНТЕЗАТОР ЗВУКОВ (Web Audio API) ---
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                masterGain = audioCtx.createGain();
+                masterGain.connect(audioCtx.destination);
+                updateVolume();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        const volumeSlider = document.getElementById('volume-slider');
+        volumeSlider.addEventListener('input', updateVolume);
+
+        function updateVolume() {
+            if (masterGain && audioCtx) {
+                masterGain.gain.setValueAtTime(volumeSlider.value, audioCtx.currentTime);
+            }
+        }
+
+        function playClickSound(freq = 1000, vol = 0.05, duration = 0.1) {
+            if (!audioCtx) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(vol, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+                
+                osc.connect(gainNode);
+                gainNode.connect(masterGain);
+                
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch (e) {
+                console.error("Ошибка звука:", e);
+            }
+        }
+
+        function playCockSound() {
+            if (!audioCtx) return;
+            playClickSound(1200, 0.07, 0.08);
+            setTimeout(() => {
+                playClickSound(800, 0.09, 0.12);
+            }, 80);
+        }
+
+        function playEmptyClickSound() {
+            if (!audioCtx) return;
+            playClickSound(950, 0.04, 0.28);
+            setTimeout(() => {
+                try {
+                    const osc = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(340, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.04, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
+                    
+                    osc.connect(gainNode);
+                    gainNode.connect(masterGain);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.05);
+                } catch (e) {}
+            }, 15);
+        }
+
+        function playExtractorSound() {
+            if (!audioCtx) return;
+            for (let i = 0; i < 5; i++) {
+                setTimeout(() => {
+                    playClickSound(400 + i * 150, 0.03, 0.05);
+                }, i * 30);
+            }
+            setTimeout(() => {
+                playClickSound(750, 0.06, 0.15);
+            }, 150);
+        }
+
+        function playSpinDeceleratingSound(duration) {
+            if (!audioCtx) return;
+            let elapsed = 0;
+            let interval = 0.04;
+            const clickChain = () => {
+                if (elapsed >= duration) return;
+                playClickSound(1400 - (elapsed * 120), 0.03, 0.05);
+                triggerHaptic('spin');
+                elapsed += interval;
+                interval *= 1.15;
+                setTimeout(clickChain, interval * 1000);
+            };
+            clickChain();
+        }
+
+        function playGunshotSound() {
+            if (!audioCtx) return;
+            try {
+                const now = audioCtx.currentTime;
+                
+                // 1. Низкочастотный удар (Boom)
+                const osc = audioCtx.createOscillator();
+                const gainOsc = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(180, now);
+                osc.frequency.exponentialRampToValueAtTime(10, now + 0.4);
+                gainOsc.gain.setValueAtTime(0.9, now);
+                gainOsc.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+                
+                osc.connect(gainOsc);
+                gainOsc.connect(masterGain);
+                osc.start();
+                osc.stop(now + 0.5);
+
+                // 2. Высокочастотный пороховой треск
+                const bufferSize = audioCtx.sampleRate * 0.4;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 1000;
+                filter.Q.value = 1.0;
+
+                const gainNoise = audioCtx.createGain();
+                gainNoise.gain.setValueAtTime(0.7, now);
+                gainNoise.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+                noise.connect(filter);
+                filter.connect(gainNoise);
+                gainNoise.connect(masterGain);
+                
+                noise.start();
+                noise.stop(now + 0.4);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // --- ЛОГИРОВАНИЕ ---
+
+        function log(message, type = 'default') {
+            const container = document.getElementById('log-container');
+            if (!container) return;
+
+            const entry = document.createElement('div');
+            entry.className = 'py-0.5 border-b border-gray-900 border-opacity-40';
+
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            let colorClass = 'text-gray-400';
+            let prefix = '⚙️';
+
+            if (type === 'system') {
+                colorClass = 'text-blue-400 font-bold';
+                prefix = '🤖';
+            } else if (type === 'success') {
+                colorClass = 'text-emerald-400 font-bold';
+                prefix = '✅';
+            } else if (type === 'warn') {
+                colorClass = 'text-amber-400';
+                prefix = '⚠️';
+            } else if (type === 'danger') {
+                colorClass = 'text-red-500 font-bold uppercase tracking-wider';
+                prefix = '💥';
+            }
+
+            entry.innerHTML = `<span class="text-gray-600 mr-1.5">[${timestamp}]</span><span class="${colorClass}">${prefix} ${message}</span>`;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearLog() {
+            const container = document.getElementById('log-container');
+            if (container) container.innerHTML = '';
+        }
+
+        // --- ИНИЦИАЛИЗАЦИЯ И ИНТЕРФЕЙС ---
+
+        window.addEventListener('DOMContentLoaded', () => {
+            if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                const user = tg.initDataUnsafe.user;
+                myName = user.first_name || user.username || "Игрок";
+            } else {
+                myName = "Игрок_" + Math.floor(100 + Math.random() * 900);
+            }
+
+            let startParam = null;
+            if (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) {
+                startParam = tg.initDataUnsafe.start_param;
+            }
+
+            let hashParam = window.location.hash ? window.location.hash.substring(1) : null;
+            
+            let autoRoom = startParam || hashParam;
+            if (autoRoom && autoRoom.length >= 2) {
+                document.getElementById('room-input-code').value = autoRoom;
+                joinOnlineRoom(false);
+            } else {
+                history.replaceState(null, null, ' ');
+                showScreen('menu');
+            }
+
+            renderChambers();
+            updateRisk();
+        });
+
+        function triggerHaptic(type) {
+            if (tg && tg.HapticFeedback) {
+                if (type === 'spin') tg.HapticFeedback.impactOccurred('light');
+                if (type === 'click') tg.HapticFeedback.impactOccurred('medium');
+                if (type === 'shot') tg.HapticFeedback.notificationOccurred('error');
+            }
+        }
+
+        function showScreen(screen) {
+            if (screen === 'menu') {
+                document.getElementById('screen-menu').classList.remove('hidden');
+                document.getElementById('screen-game').classList.add('hidden');
+            } else if (screen === 'game') {
+                document.getElementById('screen-menu').classList.add('hidden');
+                document.getElementById('screen-game').classList.remove('hidden');
+            }
+        }
+
+        // --- ВИЗУАЛИЗАЦИЯ КАМОР И РИСКОВ ---
+
+        function renderChambers() {
+            let loadedCount = 0;
+            for (let i = 0; i < 6; i++) {
+                const bulletGroup = document.getElementById(`bullet-${i}`);
+                const primer = document.getElementById(`primer-${i}`);
+                if (bulletGroup) {
+                    if (chambers[i] === 1) { 
+                        loadedCount++;
+                    }
+
+                    // Если барабан закрыт — полностью вырезаем отображение патронов из рендеринга
+                    if (isCylinderClosed) {
+                        bulletGroup.classList.add('hidden');
+                    } else {
+                        if (chambers[i] === 1) { 
+                            bulletGroup.classList.remove('hidden');
+                            if (primer) primer.setAttribute('fill', '#999'); 
+                        } else if (chambers[i] === 2) { 
+                            bulletGroup.classList.remove('hidden');
+                            if (primer) primer.setAttribute('fill', '#111'); 
+                        } else { 
+                            bulletGroup.classList.add('hidden');
+                        }
+                    }
+                }
+            }
+            document.getElementById('bullet-count').textContent = `ЗАРЯЖЕНО: ${loadedCount} / 6`;
+            updateRisk();
+        }
+
+        function updateRisk() {
+            const riskPercentageEl = document.getElementById('risk-percentage');
+            if (!riskPercentageEl) return;
+            
+            const liveBullets = chambers.filter(c => c === 1).length;
+            if (liveBullets === 0) {
+                riskPercentageEl.textContent = '0%';
+                return;
+            }
+
+            const risk = Math.round((liveBullets / 6) * 100);
+            riskPercentageEl.textContent = `${risk}%`;
+        }
+
+        // --- КОПИРОВАНИЕ НАЗВАНИЯ/КОДА КОМНАТЫ ---
+
+        function copyRoomCode() {
+            if (!roomId) return;
+            const textToCopy = roomId;
+            
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    log(`Код комнаты ${textToCopy} скопирован!`, 'success');
+                    showTemporaryCopyFeedback();
+                }).catch(() => {
+                    fallbackCopy(textToCopy);
+                });
+            } else {
+                fallbackCopy(textToCopy);
+            }
+        }
+
+        function fallbackCopy(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.top = "0";
+            textArea.style.left = "0";
+            textArea.style.width = "2em";
+            textArea.style.height = "2em";
+            textArea.style.padding = "0";
+            textArea.style.border = "none";
+            textArea.style.outline = "none";
+            textArea.style.boxShadow = "none";
+            textArea.style.background = "transparent";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                log(`Код комнаты ${text} скопирован в буфер обмена!`, 'success');
+                showTemporaryCopyFeedback();
+            } catch (err) {
+                log('Не удалось автоматически скопировать код.', 'warn');
+            }
+            document.body.removeChild(textArea);
+        }
+
+        function showTemporaryCopyFeedback() {
+            const span = document.getElementById('copy-indicator');
+            if (span) {
+                const originalText = span.textContent;
+                span.textContent = '(скопировано!)';
+                span.className = 'text-emerald-400 font-bold text-[9px] lowercase transition-colors duration-200';
+                setTimeout(() => {
+                    span.textContent = originalText;
+                    span.className = 'text-gray-500 font-normal lowercase transition-colors duration-200';
+                }, 2000);
+            }
+            triggerHaptic('spin');
+        }
+
+        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT) ---
+
+        function createOnlineRoom() {
+            const generatedRoom = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
+            document.getElementById('room-input-code').value = generatedRoom;
+            joinOnlineRoom(true);
+        }
+
+        function joinOnlineRoom(isCreator = false) {
+            const codeField = document.getElementById('room-input-code');
+            const roomCode = codeField.value.trim().toUpperCase();
+            
+            if (!roomCode) {
+                alert("Пожалуйста, введите код комнаты!");
+                return;
+            }
+
+            isOnlineMode = true;
+            roomId = roomCode;
+            window.location.hash = roomId;
+
+            showScreen('game');
+            document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
+            
+            document.getElementById('lobby-panel').classList.add('hidden');
+            document.getElementById('cylinder-visual-box').classList.remove('hidden');
+            document.getElementById('btn-start-game').textContent = "НАЧАТЬ СЕТЕВУЮ ДУЭЛЬ";
+
+            // Если вы создатель, инициализируем лобби собой, чтобы сразу стать Хостом (Дилером) и не видеть плашку гостя
+            if (isCreator) {
+                players = [{ id: myClientId, name: myName, isAlive: true }];
+            } else {
+                players = [];
+            }
+
+            applySyncedVisualState();
+            connectToNetworkBroker();
+        }
+
+        function connectToNetworkBroker() {
+            initAudio();
+            log(`Подключение к сетевому брокеру для комнаты #${roomId}...`, 'system');
+            
+            const statusLabel = document.getElementById('network-status');
+            statusLabel.textContent = 'Подключение...';
+            statusLabel.className = 'px-2 py-0.5 text-[9px] bg-yellow-900 text-yellow-400 border border-yellow-800 rounded uppercase font-bold';
+
+            connectTimeout = setTimeout(() => {
+                if (mqttClient && !mqttClient.connected) {
+                    log('Превышено время ожидания сети. Проверьте соединение.', 'warn');
+                    statusLabel.textContent = 'Связь: ОФФЛАЙН';
+                    statusLabel.className = 'px-2 py-0.5 text-[9px] bg-red-950 text-red-400 border border-red-900/40 rounded uppercase font-bold';
+                    mqttClient.end(true);
+                    exitToMainMenu();
+                }
+            }, 7000);
+
+            mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+                clientId: myClientId,
+                keepalive: 60,
+                clean: true,
+                connectTimeout: 4000,
+                reconnectPeriod: 2000 // Автоподключение каждые 2 секунды при разрыве связи
+            });
+
+            mqttClient.on('connect', () => {
+                if (connectTimeout) clearTimeout(connectTimeout);
+                log('Сетевое сопряжение установлено!', 'success');
+                statusLabel.textContent = 'Связь: ОНЛАЙН';
+                statusLabel.className = 'px-2 py-0.5 text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-900/40 rounded uppercase font-bold';
+
+                const roomTopic = `tg-revolver/rooms/${roomId}`;
+                mqttClient.subscribe(roomTopic, (err) => {
+                    if (!err) {
+                        sendNetworkPayload({
+                            type: 'JOIN',
+                            id: myClientId,
+                            name: myName
+                        });
+                    }
+                });
+            });
+
+            mqttClient.on('message', (topic, payload) => {
+                try {
+                    const message = JSON.parse(payload.toString());
+                    if (message.senderId === myClientId) return; 
+                    handleIncomingNetworkMessage(message);
+                } catch (e) {
+                    console.error('Ошибка декодирования пакета:', e);
+                }
+            });
+
+            mqttClient.on('error', () => {
+                if (connectTimeout) clearTimeout(connectTimeout);
+                log('Произошел сбой сети. Проверьте интернет.', 'warn');
+                statusLabel.textContent = 'Связь: ОШИБКА';
+                statusLabel.className = 'px-2 py-0.5 text-[9px] bg-red-950 text-red-400 border border-red-900/40 rounded uppercase font-bold';
+            });
+        }
+
+        function sendNetworkPayload(data) {
+            if (mqttClient && mqttClient.connected) {
+                const roomTopic = `tg-revolver/rooms/${roomId}`;
+                data.senderId = myClientId;
+                // QoS 0 предпочтительнее для реалтайм-клиента в браузере
+                mqttClient.publish(roomTopic, JSON.stringify(data), { qos: 0 });
+            }
+        }
+
+        // --- СЕТЕВОЙ ГОЛОВНОЙ ДИСПЕТЧЕР (LOCKSTEP) ---
+
+        function handleIncomingNetworkMessage(msg) {
+            switch (msg.type) {
+                case 'JOIN':
+                    if (amIHost()) {
+                        if (!players.some(p => p.id === msg.id)) {
+                            players.push({ id: msg.id, name: msg.name, isAlive: true });
+                            log(`Игрок [${msg.name}] вошел в лобби.`, 'system');
+                        } else {
+                            log(`Игрок [${msg.name}] переподключился к лобби.`, 'system');
+                        }
+                        // Всегда высылаем полный актуальный снимок состояния гостю при его подключении
+                        sendStateSyncPayload();
+                    }
+                    break;
+
+                case 'SYNC':
+                    players = msg.players;
+                    chambers = msg.chambers;
+                    activeIndex = msg.activeIndex;
+                    isCylinderClosed = msg.isCylinderClosed;
+                    currentPlayerIndex = msg.currentPlayerIndex;
+                    isGameSessionActive = msg.isGameSessionActive;
+
+                    applySyncedVisualState();
+                    break;
+
+                case 'LOAD_CHAMBER':
+                    chambers = msg.chambers;
+                    playClickSound(1100, 0.04, 0.15);
+                    renderChambers();
+                    break;
+
+                case 'EXTRACT':
+                    playExtractorSound();
+                    chambers = [0, 0, 0, 0, 0, 0];
+                    renderChambers();
+                    break;
+
+                case 'CYLINDER_TOGGLE':
+                    isCylinderClosed = msg.closed;
+                    applyCylinderCoverState();
+                    updatePlayersUI();
+                    break;
+
+                case 'SPIN_RUN':
+                    executeSpinSequence(msg.targetIndex, msg.spins);
+                    break;
+
+                case 'REQUEST_FIRE':
+                    // Выстрел по запросу Гостя (выполняется только на стороне Дилера для контроля состояния)
+                    if (amIHost()) {
+                        const expectedShooter = players[currentPlayerIndex];
+                        if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
+                            sendNetworkPayload({
+                                type: 'TRIGGER_FIRE',
+                                activeIndex: activeIndex,
+                                chambers: chambers,
+                                currentPlayerIndex: currentPlayerIndex
+                            });
+                            executeFireSequence();
+                        }
+                    }
+                    break;
+
+                case 'TRIGGER_FIRE':
+                    // Синхронизируем состояние каморы перед выстрелом, чтобы избежать расхождений из-за пинга
+                    activeIndex = msg.activeIndex;
+                    chambers = msg.chambers;
+                    currentPlayerIndex = msg.currentPlayerIndex;
+                    executeFireSequence();
+                    break;
+
+                case 'GAME_START':
+                    isGameSessionActive = true;
+                    log('Дуэль началась! Барабан скрыт.', 'system');
+                    applySyncedVisualState();
+                    break;
+
+                case 'RESET_ROUND':
+                    resetFullSessionLocal();
+                    break;
+
+                case 'PROPOSE_REPLAY':
+                    log(`Игрок [${msg.senderName}] предлагает сыграть снова!`, 'system');
+                    if (!proposedReplayPlayers.some(p => p.id === msg.senderId)) {
+                        proposedReplayPlayers.push({ id: msg.senderId, name: msg.senderName });
+                    }
+                    addReplayNoticeToOverlay(msg.senderName, msg.senderId);
+                    break;
+            }
+        }
+
+        function amIHost() {
+            if (!isOnlineMode) return true;
+            return players.length > 0 && players[0].id === myClientId;
+        }
+
+        function sendStateSyncPayload() {
+            if (!amIHost()) return;
+            sendNetworkPayload({
+                type: 'SYNC',
+                players: players,
+                chambers: chambers,
+                activeIndex: activeIndex,
+                isCylinderClosed: isCylinderClosed,
+                currentPlayerIndex: currentPlayerIndex,
+                isGameSessionActive: isGameSessionActive
+            });
+            updatePlayersUI();
+        }
+
+        function applySyncedVisualState() {
+            renderChambers();
+            applyCylinderCoverState();
+            updatePlayersUI();
+            
+            const dealerBox = document.getElementById('wait-message-box');
+            const visualBox = document.getElementById('cylinder-visual-box');
+            const startGameBtn = document.getElementById('btn-start-game');
+            
+            if (isOnlineMode) {
+                if (amIHost()) {
+                    dealerBox.classList.add('hidden');
+                    visualBox.classList.remove('hidden');
+                    if (startGameBtn) startGameBtn.classList.remove('hidden');
+                    document.getElementById('control-panel-title').textContent = "Управление (Вы Дилер)";
+                } else {
+                    if (startGameBtn) startGameBtn.classList.add('hidden'); // Гость не должен видеть кнопку запуска
+                    if (!isGameSessionActive) {
+                        dealerBox.classList.remove('hidden');
+                        visualBox.classList.add('hidden');
+                    } else {
+                        dealerBox.classList.add('hidden');
+                        visualBox.classList.remove('hidden');
+                    }
+                    document.getElementById('control-panel-title').textContent = "Панель зрителя";
+                }
+            } else {
+                if (startGameBtn) startGameBtn.classList.remove('hidden');
+            }
+        }
+
+        function applyCylinderCoverState() {
+            const btn = document.getElementById('btn-toggle-cylinder');
+            const cover = document.getElementById('cylinder-cover');
+            const gunCylinder = document.getElementById('gun-cylinder-side');
+            const badgeCylinder = document.getElementById('badge-cylinder');
+
+            if (isCylinderClosed) {
+                btn.textContent = 'ОТКРЫТЬ БАРАБАН';
+                cover.classList.remove('opacity-0', 'pointer-events-none', 'scale-95');
+                cover.classList.add('opacity-100', 'scale-100');
+                gunCylinder.setAttribute('transform', 'translate(0, 0) rotate(0)');
+                badgeCylinder.textContent = "Барабан закрыт";
+                badgeCylinder.className = "px-2 py-0.5 text-[9px] bg-red-950 text-red-400 border border-red-900/40 rounded uppercase font-bold";
+            } else {
+                btn.textContent = 'ЗАКРЫТЬ БАРАБАН';
+                cover.classList.remove('opacity-100', 'scale-100');
+                cover.classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+                gunCylinder.setAttribute('transform', 'translate(-12px, 16px) rotate(-4deg)');
+                badgeCylinder.textContent = "Барабан откинут";
+                badgeCylinder.className = "px-2 py-0.5 text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-900/40 rounded uppercase font-bold";
+            }
+            renderChambers();
+        }
+
+        // --- ЛОКАЛЬНЫЙ РЕЖИМ (ОФФЛАЙН ЛОББИ) ---
+
+        function startOfflineMode() {
+            isOnlineMode = false;
+            roomId = null;
+            history.replaceState(null, null, ' ');
+
+            showScreen('game');
+            document.getElementById('session-label').innerHTML = 'Локальная дуэль (Hot-Seat)';
+            
+            // Настройка лобби и сброс кнопки
+            document.getElementById('lobby-panel').classList.remove('hidden');
+            document.getElementById('btn-start-game').classList.remove('hidden');
+            document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
+            document.getElementById('btn-reset-lobby').classList.add('hidden');
+            
+            document.getElementById('cylinder-visual-box').classList.add('hidden');
+            document.getElementById('wait-message-box').classList.add('hidden');
+
+            // Восстанавливаем кнопки быстрого снаряжения в подготовке
+            document.getElementById('btn-load-1').classList.remove('hidden');
+            document.getElementById('btn-load-3').classList.remove('hidden');
+            document.getElementById('btn-extract').classList.remove('hidden');
+            document.getElementById('quick-action-row').classList.remove('hidden');
+
+            players = [
+                { id: 'local_1', name: myName, isAlive: true },
+                { id: 'local_2', name: "Игрок 2", isAlive: true }
+            ];
+            renderLobbyInputs();
+            updatePlayersUI();
+        }
+
+        function renderLobbyInputs() {
+            const listContainer = document.getElementById('players-input-list');
+            listContainer.innerHTML = '';
+            players.forEach((player, index) => {
+                const div = document.createElement('div');
+                div.className = "flex items-center gap-2";
+                div.innerHTML = `
+                    <span class="text-gray-600 text-xs w-4">#${index+1}</span>
+                    <input type="text" value="${player.name}" oninput="updatePlayerName(${index}, this.value)" class="flex-1 bg-black border border-gray-800 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-amber-500">
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+
+        function updatePlayerName(index, val) {
+            players[index].name = val.trim() || `Игрок ${index + 1}`;
+        }
+
+        function addPlayerField() {
+            if (players.length >= 6) return;
+            players.push({ id: 'local_' + (players.length + 1), name: `Игрок ${players.length + 1}`, isAlive: true });
+            renderLobbyInputs();
+            playClickSound(1000, 0.02, 0.1);
+        }
+
+        function removeLastPlayerField() {
+            if (players.length <= 2) return;
+            players.pop();
+            renderLobbyInputs();
+            playClickSound(800, 0.02, 0.1);
+        }
+
+        // --- МЕХАНИКА ИГРЫ И ВЗАИМОДЕЙСТВИЙ ---
+
+        function startGameSession() {
+            if (isGameSessionActive) return;
+
+            if (isOnlineMode) {
+                if (!amIHost()) return; 
+                if (players.length < 2) {
+                    log('Сетевая дуэль требует минимум 2 участников!', 'warn');
+                    return;
+                }
+                isGameSessionActive = true;
+                
+                // Принудительно закрываем барабан, чтобы игроки не застревали в режиме подготовки
+                isCylinderClosed = true;
+                applyCylinderCoverState();
+
+                sendNetworkPayload({ type: 'GAME_START' });
+                sendStateSyncPayload();
+            } else {
+                players.forEach((p, i) => {
+                    if(!p.name) p.name = `Игрок ${i+1}`;
+                });
+                isGameSessionActive = true;
+                currentPlayerIndex = 0;
+                
+                // Скрываем настройку лобби и открываем барабан
+                document.getElementById('lobby-panel').classList.add('hidden');
+                document.getElementById('cylinder-visual-box').classList.remove('hidden');
+                document.getElementById('btn-start-game').classList.add('hidden');
+                document.getElementById('btn-load-1').classList.add('hidden');
+                document.getElementById('btn-load-3').classList.add('hidden');
+                document.getElementById('btn-extract').classList.add('hidden');
+                document.getElementById('quick-action-row').classList.add('hidden');
+                
+                // Показываем кнопку сброса дуэли во время игры
+                document.getElementById('btn-reset-lobby').classList.remove('hidden');
+
+                // Прямой вызов скрытия патронов, чтобы избежать бага с инверсией вызова toggleCylinder()
+                isCylinderClosed = true;
+                applyCylinderCoverState();
+                log('Оффлайн раунд начат. Дилер скрыл каморы.', 'system');
+            }
+            updatePlayersUI();
+        }
+
+        function updatePlayersUI() {
+            const turnList = document.getElementById('players-turn-list');
+            if (!turnList) return;
+            turnList.innerHTML = '';
+
+            players.forEach((player, index) => {
+                const div = document.createElement('div');
+                div.className = `flex justify-between items-center p-1 rounded ${index === currentPlayerIndex && player.isAlive && isCylinderClosed ? 'bg-yellow-950 bg-opacity-30 text-amber-400 font-bold border-l-2 border-amber-500 pl-2' : 'text-gray-400'}`;
+                
+                let statusIcon = '🟢 Жив';
+                if (!player.isAlive) {
+                    statusIcon = '💀 Умер';
+                    div.className = 'text-gray-600 line-through';
+                }
+
+                div.innerHTML = `
+                    <span>${player.name} ${index === currentPlayerIndex && player.isAlive && isCylinderClosed ? '◀' : ''}</span>
+                    <span class="text-[10px] uppercase">${statusIcon}</span>
+                `;
+                turnList.appendChild(div);
+            });
+
+            const activeName = document.getElementById('active-player-name');
+            const fireBtn = document.getElementById('btn-fire');
+
+            let isMyTurn = false;
+            if (!isOnlineMode) {
+                isMyTurn = true; 
+            } else if (players[currentPlayerIndex]) {
+                isMyTurn = (players[currentPlayerIndex].id === myClientId);
+            }
+
+            if (!isCylinderClosed) {
+                activeName.textContent = "Снаряжение...";
+                activeName.className = "text-sm font-bold text-gray-500 block";
+                fireBtn.disabled = true;
+                fireBtn.className = "flex-1 bg-gray-800 border border-gray-700 text-gray-500 font-bold py-3.5 px-6 rounded-md uppercase tracking-wider cursor-not-allowed";
+                fireBtn.textContent = "ПОДГОТОВКА...";
+            } else {
+                const currentShooter = players[currentPlayerIndex];
+                activeName.textContent = currentShooter ? currentShooter.name : "Ожидание...";
+                activeName.className = "text-sm font-bold text-amber-500 block";
+
+                if (isMyTurn && isGameSessionActive && !isAnimating) {
+                    fireBtn.disabled = false;
+                    fireBtn.className = "flex-1 bg-red-800 hover:bg-red-750 border border-red-600 text-white font-bold py-3.5 px-6 rounded-md uppercase tracking-wider transition-all duration-150 shadow-lg cursor-pointer";
+                    fireBtn.textContent = "ВАШ ХОД (СПУСК)";
+                } else {
+                    fireBtn.disabled = true;
+                    fireBtn.className = "flex-1 bg-gray-900 border border-gray-880 text-gray-600 font-bold py-3.5 px-6 rounded-md uppercase tracking-wider cursor-not-allowed";
+                    fireBtn.textContent = isGameSessionActive ? `ЖДЕМ ${currentShooter ? currentShooter.name.toUpperCase() : 'ХОД'}` : "ОЖИДАНИЕ СТАРТА";
+                }
+            }
+
+            const isHost = amIHost();
+            document.getElementById('btn-toggle-cylinder').disabled = !isHost;
+            
+            // Барабан может крутить Хост в любое время или Гость, когда настал именно его ход во время активной игры
+            document.getElementById('btn-spin').disabled = !(isHost || (isOnlineMode && isMyTurn && isCylinderClosed && isGameSessionActive));
+            
+            document.getElementById('btn-load-1').disabled = !isHost;
+            document.getElementById('btn-load-3').disabled = !isHost;
+            document.getElementById('btn-extract').disabled = !isHost;
+        }
+
+        // --- МЕХАНИКА РЕВОЛЬВЕРА ---
+
+        function clickChamber(index) {
+            if (isAnimating) return;
+            if (isCylinderClosed) return;
+            if (!amIHost()) return; 
+
+            initAudio();
+            if (chambers[index] === 0) {
+                chambers[index] = 1;
+                playClickSound(1150, 0.04, 0.16);
+            } else {
+                chambers[index] = 0;
+                playClickSound(850, 0.03, 0.12);
+            }
+            renderChambers();
+
+            if (isOnlineMode) {
+                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers });
+            }
+        }
+
+        function toggleCylinder() {
+            if (isAnimating) return;
+            if (!amIHost()) return; 
+            initAudio();
+
+            isCylinderClosed = !isCylinderClosed;
+            applyCylinderCoverState();
+            updatePlayersUI();
+
+            if (isOnlineMode) {
+                sendNetworkPayload({ type: 'CYLINDER_TOGGLE', closed: isCylinderClosed });
+                sendStateSyncPayload();
+            }
+        }
+
+        function spinCylinderHard() {
+            if (isAnimating) return;
+            if (!isCylinderClosed) return;
+
+            let canSpin = amIHost();
+            if (isOnlineMode) {
+                const currentShooter = players[currentPlayerIndex];
+                const isMyTurn = currentShooter && (currentShooter.id === myClientId);
+                if (isMyTurn && isGameSessionActive) {
+                    canSpin = true;
+                }
+            }
+
+            if (!canSpin) return;
+
+            initAudio();
+            log('Барабан раскручен...', 'system');
+
+            const nextChamber = Math.floor(Math.random() * 6);
+            const fullSpins = 6 + Math.floor(Math.random() * 5);
+
+            executeSpinSequence(nextChamber, fullSpins);
+
+            if (isOnlineMode) {
+                sendNetworkPayload({
+                    type: 'SPIN_RUN',
+                    targetIndex: nextChamber,
+                    spins: fullSpins
+                });
+                activeIndex = nextChamber;
+                
+                // Только хост отсылает полный слепок состояния во избежание десинхронизации
+                if (amIHost()) {
+                    sendStateSyncPayload();
+                }
+            }
+        }
+
+        function executeSpinSequence(targetIndex, spins) {
+            isAnimating = true;
+            activeIndex = targetIndex;
+
+            const spinDuration = 3.5;
+            playSpinDeceleratingSound(spinDuration);
+
+            const cylinderFace = document.getElementById('cylinder-face-svg');
+            const sideCylinder = document.getElementById('gun-cylinder-side');
+            
+            cylinderFace.style.filter = 'blur(4px)';
+            sideCylinder.style.filter = 'blur(2px)';
+
+            const finalAngle = -(spins * 360 + activeIndex * 60);
+
+            cylinderFace.style.transition = `transform ${spinDuration}s cubic-bezier(0.1, 0.85, 0.15, 1)`;
+            cylinderFace.style.transform = `rotate(${finalAngle}deg)`;
+
+            triggerHaptic('spin');
+
+            let intervalCount = 0;
+            const sideSpinInterval = setInterval(() => {
+                if (intervalCount > 30) {
+                    clearInterval(sideSpinInterval);
+                } else {
+                    const offset = (intervalCount * 8) % 15;
+                    sideCylinder.setAttribute('transform', `translate(0, ${offset - 7}px)`);
+                    intervalCount++;
+                }
+            }, 100);
+
+            setTimeout(() => {
+                cylinderFace.style.filter = 'none';
+                sideCylinder.style.filter = 'none';
+                sideCylinder.setAttribute('transform', 'translate(0, 0)');
+                isAnimating = false;
+
+                document.getElementById('active-chamber-num').textContent = `#${activeIndex + 1}`;
+                updateRisk();
+                updatePlayersUI();
+            }, spinDuration * 1000);
+        }
+
+        function fireRevolver() {
+            if (isAnimating) return;
+            if (!isCylinderClosed) return;
+
+            initAudio();
+
+            if (isOnlineMode) {
+                if (amIHost()) {
+                    // Хост вещает выстрел всем гостям
+                    sendNetworkPayload({ 
+                        type: 'TRIGGER_FIRE',
+                        activeIndex: activeIndex,
+                        chambers: chambers,
+                        currentPlayerIndex: currentPlayerIndex
+                    });
+                    executeFireSequence();
+                } else {
+                    // Гость делает запрос выстрела Хосту
+                    sendNetworkPayload({ type: 'REQUEST_FIRE' });
+                    isAnimating = true; // Блокировка кнопки до подтверждения сетевого пакета
+                }
+            } else {
+                executeFireSequence();
+            }
+        }
+
+        function executeFireSequence() {
+            isAnimating = true;
+
+            const hammer = document.getElementById('gun-hammer');
+            const trigger = document.getElementById('gun-trigger');
+            const gunBodyGroup = document.getElementById('gun-body-group');
+            const cylinderFace = document.getElementById('cylinder-face-svg');
+
+            const shooter = players[currentPlayerIndex];
+            log(`[${shooter ? shooter.name : 'Игрок'}] нажал на спуск...`, 'default');
+            
+            hammer.style.transform = 'rotate(-32deg)';
+            trigger.style.transform = 'rotate(-15deg)';
+            playCockSound();
+
+            setTimeout(() => {
+                activeIndex = (activeIndex + 1) % 6;
+                document.getElementById('active-chamber-num').textContent = `#${activeIndex + 1}`;
+                
+                cylinderFace.style.transition = 'transform 0.15s cubic-bezier(0.2, 0.9, 0.4, 1.2)';
+                cylinderFace.style.transform = `rotate(${-activeIndex * 60}deg)`;
+            }, 100);
+
+            setTimeout(() => {
+                hammer.style.transform = 'rotate(0deg)';
+                trigger.style.transform = 'rotate(0deg)';
+
+                const hasBullet = (chambers[activeIndex] === 1);
+
+                if (hasBullet) {
+                    playGunshotSound();
+                    triggerHaptic('shot');
+                    
+                    gunBodyGroup.classList.add('recoil-active');
+                    document.getElementById('muzzle-flash').classList.add('flash-active');
+                    document.body.classList.add('shake-screen');
+
+                    chambers[activeIndex] = 2; // гильза отстрелена
+                    if (shooter) shooter.isAlive = false;
+
+                    // Мгновенное обновление статуса на "Умер" в табличке перед открытием оверлея
+                    updatePlayersUI(); 
+
+                    log(`[${shooter ? shooter.name : 'Игрок'}] - СМЕРТЕЛЬНЫЙ ВЫСТРЕЛ!`, 'danger');
+
+                    // Хост синхронизирует финальное состояние с другими игроками после попадания
+                    if (isOnlineMode && amIHost()) {
+                        sendStateSyncPayload();
+                    }
+
+                    // Моментальный показ полностью непрозрачного оверлея исхода
+                    setTimeout(() => {
+                        handleShotOutcome(shooter);
+                    }, 150);
+
+                } else {
+                    playEmptyClickSound();
+                    triggerHaptic('click');
+                    gunBodyGroup.classList.add('misfire-active');
+
+                    log(`[${shooter ? shooter.name : 'Игрок'}] - ОБЛЕГЧЕНИЕ. Осечка!`, 'success');
+
+                    setTimeout(() => {
+                        gunBodyGroup.classList.remove('misfire-active');
+                        isAnimating = false;
+                        
+                        passTurn();
+                    }, 300);
+                }
+
+                setTimeout(() => {
+                    gunBodyGroup.classList.remove('recoil-active');
+                    document.getElementById('muzzle-flash').classList.remove('flash-active');
+                    document.body.classList.remove('shake-screen');
+                }, 600);
+
+            }, 250);
+        }
+
+        function passTurn() {
+            const alivePlayers = players.filter(p => p.isAlive);
+            if (alivePlayers.length <= 1) return;
+
+            let nextIndex = currentPlayerIndex;
+            let searchCount = 0;
+            do {
+                nextIndex = (nextIndex + 1) % players.length;
+                searchCount++;
+                if (searchCount > players.length * 2) break; 
+            } while (!players[nextIndex].isAlive);
+
+            currentPlayerIndex = nextIndex;
+            updatePlayersUI();
+
+            // Хост отправляет финальную синхронизацию после переключения очереди, чтобы Гость разблокировал кнопку выстрела
+            if (isOnlineMode && amIHost()) {
+                sendStateSyncPayload();
+            }
+        }
+
+        // --- ДИНАМИЧЕСКИЙ ОБРАБОТЧИК КНОПОК ОВЕРЛЕЯ ---
+
+        function handleShotOutcome(deadPlayer) {
+            const alivePlayers = players.filter(p => p.isAlive);
+            const overlay = document.getElementById('game-overlay');
+            const title = document.getElementById('overlay-title');
+            const msg = document.getElementById('overlay-message');
+            const btn = document.getElementById('overlay-btn');
+
+            const isHost = amIHost();
+
+            btn.onclick = null; 
+            btn.disabled = false;
+
+            if (alivePlayers.length <= 1) {
+                const winner = alivePlayers[0] || { name: "Никто" };
+                title.textContent = "ПОБЕДИТЕЛЬ!";
+                title.className = "text-5xl font-black text-emerald-500 tracking-wider mb-4 drop-shadow-[0_4px_10px_rgba(16,185,129,0.4)]";
+                
+                // Оверлей дуэли с выделенным блоком для отображения предложений
+                msg.innerHTML = `
+                    <div class="text-gray-100 text-sm mb-6 uppercase tracking-wider leading-relaxed">
+                        Игрок <span class="text-red-500 font-bold">${deadPlayer ? deadPlayer.name : 'Игрок'}</span> застрелился.<br><br>Дуэль завершена! Победитель: <span class="text-emerald-400 font-bold text-xl">${winner.name}</span>
+                    </div>
+                    <div id="replay-notices-container" class="mt-4 border-t border-zinc-800 pt-3 space-y-1"></div>
+                `;
+
+                if (isOnlineMode) {
+                    if (isHost) {
+                        // Дилер может сразу перезапустить игру
+                        btn.textContent = "Новый раунд";
+                        btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
+                        btn.onclick = () => {
+                            resetRoundNetwork();
+                        };
+                    } else {
+                        // Гость отправляет запрос переигровки
+                        if (proposedReplayPlayers.some(p => p.id === myClientId)) {
+                            btn.textContent = "Предложение отправлено";
+                            btn.disabled = true;
+                            btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+                        } else {
+                            btn.textContent = "Предложить сыграть снова";
+                            btn.className = "w-full px-8 py-4 bg-amber-600 hover:bg-amber-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(245,158,11,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-amber-400 cursor-pointer";
+                            btn.onclick = () => {
+                                proposeReplayFromGuest();
+                            };
+                        }
+                    }
+                } else {
+                    btn.textContent = "В главное меню";
+                    btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
+                    btn.onclick = () => {
+                        resetFullSession();
+                    };
+                }
+
+                // Рендерим предложения, пришедшие по сети до открытия оверлея
+                const noticesContainer = document.getElementById('replay-notices-container');
+                if (noticesContainer) {
+                    proposedReplayPlayers.forEach(p => {
+                        const noticeId = `replay-notice-${p.id}`;
+                        if (!document.getElementById(noticeId)) {
+                            const notice = document.createElement('div');
+                            notice.id = noticeId;
+                            notice.className = "text-emerald-400 mt-2 text-xs font-bold uppercase tracking-wider animate-pulse";
+                            notice.textContent = `⚡ Игрок ${p.name} хочет сыграть снова!`;
+                            noticesContainer.appendChild(notice);
+                        }
+                    });
+                }
+            } else {
+                title.textContent = "КИЛЛ";
+                title.className = "text-5xl font-bold text-red-600 tracking-wider mb-4 drop-shadow-[0_4px_10px_rgba(239,68,68,0.4)]";
+                msg.innerHTML = `<div class="text-gray-100 text-sm mb-6 uppercase tracking-wider leading-relaxed">Игрок <span class="text-red-500 font-bold">${deadPlayer ? deadPlayer.name : 'Игрок'}</span> выбыл из очереди смертников.</div>`;
+                
+                btn.className = "w-full px-8 py-4 bg-red-600 hover:bg-red-500 text-white font-extrabold rounded-md shadow-[0_0_20px_rgba(239,68,68,0.6)] hover:shadow-[0_0_30px_rgba(239,68,68,0.95)] transition-all duration-200 uppercase text-sm tracking-widest border border-red-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed";
+
+                if (isOnlineMode) {
+                    if (isHost) {
+                        btn.textContent = "Продолжить дуэль";
+                        btn.onclick = () => {
+                            closeOverlayAndContinue();
+                        };
+                    } else {
+                        btn.textContent = "Ожидание хода...";
+                        btn.disabled = true;
+                        btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+                    }
+                } else {
+                    btn.textContent = "Продолжить раунд";
+                    btn.onclick = () => {
+                        closeOverlayAndContinue();
+                    };
+                }
+            }
+
+            overlay.classList.remove('opacity-0', 'pointer-events-none');
+            overlay.classList.add('opacity-100');
+        }
+
+        // --- ПРЕДЛОЖЕНИЕ СЫГРАТЬ СНОВА (ОНЛАЙН) ---
+
+        function proposeReplayFromGuest() {
+            if (!isOnlineMode) return;
+            initAudio();
+            playClickSound(1100, 0.05, 0.15);
+
+            sendNetworkPayload({
+                type: 'PROPOSE_REPLAY',
+                senderName: myName,
+                senderId: myClientId
+            });
+
+            log('Вы предложили сыграть заново. Ожидание хоста...', 'system');
+
+            const btn = document.getElementById('overlay-btn');
+            btn.textContent = "Предложение отправлено";
+            btn.disabled = true;
+            btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+
+            // Выводим плашку локально у себя в оверлее и заносим в массив
+            if (!proposedReplayPlayers.some(p => p.id === myClientId)) {
+                proposedReplayPlayers.push({ id: myClientId, name: myName });
+            }
+            addReplayNoticeToOverlay(myName, myClientId);
+        }
+
+        function addReplayNoticeToOverlay(name, id) {
+            const container = document.getElementById('replay-notices-container');
+            if (container) {
+                const noticeId = `replay-notice-${id}`;
+                if (!document.getElementById(noticeId)) {
+                    const notice = document.createElement('div');
+                    notice.id = noticeId;
+                    notice.className = "text-emerald-400 mt-2 text-xs font-bold uppercase tracking-wider animate-pulse";
+                    notice.textContent = `⚡ Игрок ${name} хочет сыграть снова!`;
+                    container.appendChild(notice);
+                }
+            }
+        }
+
+        function closeOverlayAndContinue() {
+            document.getElementById('game-overlay').classList.remove('opacity-100');
+            document.getElementById('game-overlay').classList.add('opacity-0', 'pointer-events-none');
+            
+            isAnimating = false;
+            
+            let nextIndex = currentPlayerIndex;
+            let searchCount = 0;
+            do {
+                nextIndex = (nextIndex + 1) % players.length;
+                searchCount++;
+                if (searchCount > players.length * 2) break; 
+            } while (!players[nextIndex].isAlive);
+
+            currentPlayerIndex = nextIndex;
+            
+            if (isOnlineMode && amIHost()) {
+                sendStateSyncPayload();
+            } else {
+                updatePlayersUI();
+            }
+        }
+
+        function resetRoundNetwork() {
+            if (!amIHost()) return;
+            sendNetworkPayload({ type: 'RESET_ROUND' });
+            resetFullSessionLocal();
+        }
+
+        function resetFullSession() {
+            resetFullSessionLocal();
+            showScreen('menu');
+        }
+
+        // Сброс и возврат к кастомизации игроков прямо во время игры
+        function resetToLobby() {
+            if (isOnlineMode) {
+                exitToMainMenu();
+                return;
+            }
+            initAudio();
+            isGameSessionActive = false;
+            isCylinderClosed = false;
+            isAnimating = false;
+
+            players.forEach(p => p.isAlive = true);
+            currentPlayerIndex = 0;
+            proposedReplayPlayers = [];
+
+            document.getElementById('lobby-panel').classList.remove('hidden');
+            document.getElementById('cylinder-visual-box').classList.add('hidden');
+            document.getElementById('btn-start-game').classList.remove('hidden');
+            document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
+            document.getElementById('btn-reset-lobby').classList.add('hidden');
+
+            document.getElementById('btn-load-1').classList.remove('hidden');
+            document.getElementById('btn-load-3').classList.remove('hidden');
+            document.getElementById('btn-extract').classList.remove('hidden');
+            document.getElementById('quick-action-row').classList.remove('hidden');
+            document.getElementById('cylinder-cover').classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+
+            chambers = [0, 0, 0, 0, 0, 0];
+            activeIndex = 0;
+            document.getElementById('cylinder-face-svg').style.transition = 'none';
+            document.getElementById('cylinder-face-svg').style.transform = 'rotate(0deg)';
+            document.getElementById('active-chamber-num').textContent = '#1';
+
+            renderLobbyInputs();
+            renderChambers();
+            updatePlayersUI();
+            updateRisk();
+
+            log('Дуэль сброшена. Настройка игроков разблокирована.', 'system');
+        }
+
+        function resetFullSessionLocal() {
+            document.getElementById('game-overlay').classList.remove('opacity-100');
+            document.getElementById('game-overlay').classList.add('opacity-0', 'pointer-events-none');
+            
+            const btn = document.getElementById('overlay-btn');
+            btn.disabled = false;
+            btn.onclick = null;
+
+            isGameSessionActive = false;
+            isCylinderClosed = false;
+
+            players.forEach(p => p.isAlive = true);
+            currentPlayerIndex = 0;
+            proposedReplayPlayers = []; // Сброс списка переигровок для новой сессии
+
+            document.getElementById('btn-reset-lobby').classList.add('hidden');
+
+            if (isOnlineMode) {
+                applySyncedVisualState();
+                document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
+            } else {
+                document.getElementById('lobby-panel').classList.remove('hidden');
+                document.getElementById('cylinder-visual-box').classList.add('hidden');
+                document.getElementById('btn-start-game').classList.remove('hidden');
+                document.getElementById('btn-toggle-cylinder').textContent = 'ОТКРЫТЬ БАРАБАН';
+                
+                document.getElementById('btn-load-1').classList.remove('hidden');
+                document.getElementById('btn-load-3').classList.remove('hidden');
+                document.getElementById('btn-extract').classList.remove('hidden');
+                document.getElementById('quick-action-row').classList.remove('hidden');
+                document.getElementById('cylinder-cover').classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+
+                document.getElementById('session-label').innerHTML = 'Локальная дуэль (Hot-Seat)';
+
+                renderLobbyInputs();
+                renderChambers();
+                updatePlayersUI();
+            }
+
+            chambers = [0, 0, 0, 0, 0, 0];
+            activeIndex = 0;
+            document.getElementById('cylinder-face-svg').style.transition = 'none';
+            document.getElementById('cylinder-face-svg').style.transform = 'rotate(0deg)';
+            document.getElementById('active-chamber-num').textContent = '#1';
+
+            isAnimating = false;
+            updateRisk();
+        }
+
+        function exitToMainMenu() {
+            if (mqttClient) {
+                mqttClient.end(true);
+                mqttClient = null;
+            }
+            if (connectTimeout) clearTimeout(connectTimeout);
+            
+            history.replaceState(null, null, ' ');
+            
+            resetFullSessionLocal();
+            showScreen('menu');
+            log('Вы вернулись в главное меню.', 'default');
+        }
+
+        function exitToMainMenuFromOverlay() {
+            document.getElementById('game-overlay').classList.remove('opacity-100');
+            document.getElementById('game-overlay').classList.add('opacity-0', 'pointer-events-none');
+            exitToMainMenu();
+        }
+
+        function quickLoad(count) {
+            if (isAnimating) return;
+            if (isCylinderClosed) return;
+            if (!amIHost()) return;
+            initAudio();
+
+            chambers = [0, 0, 0, 0, 0, 0];
+            for (let i = 0; i < count; i++) {
+                chambers[i] = 1;
+            }
+            
+            playClickSound(1100, 0.05, 0.2);
+            renderChambers();
+
+            if (isOnlineMode) {
+                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers });
+            }
+        }
+
+        function ejectExtractor() {
+            if (isAnimating) return;
+            if (isCylinderClosed) return;
+            if (!amIHost()) return;
+
+            playExtractorSound();
+            chambers = [0, 0, 0, 0, 0, 0];
+            renderChambers();
+
+            if (isOnlineMode) {
+                sendNetworkPayload({ type: 'EXTRACT' });
+            }
+        }
+    </script>
+</body>
+</html>
