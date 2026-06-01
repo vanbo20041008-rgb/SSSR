@@ -163,7 +163,7 @@
                             </svg>
                             Пригласить
                         </button>
-                        <button id="btn-copy-link" onclick="copyInviteLink()" class="hidden bg-gray-800 hover:bg-gray-750 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750">
+                        <button id="btn-copy-link" onclick="copyInviteLink()" class="hidden bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 002-2h2a2 2 0 002 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/>
                             </svg>
@@ -488,7 +488,6 @@
         let myName = "Игрок";
         let connectTimeout = null;
         let guestJoinTimer = null; // Глобальный цикличный таймер на сопряжение для Гостя
-        let isCreatorFallback = false; // Сохранение роли при автовосстановлении сессии
 
         // Состояние локальной / сетевой игры
         let players = [];
@@ -719,40 +718,24 @@
                 }
             }
 
-            let hashParam = window.location.hash ? window.location.hash.substring(1) : null;
+            // Чтение хэша с жесткой фильтрацией служебных данных Telegram (tgWebAppData)
+            let hashParam = null;
+            if (window.location.hash) {
+                const hashVal = window.location.hash.substring(1);
+                if (hashVal && !hashVal.startsWith('tgWebAppData') && !hashVal.includes('tgWebAppData')) {
+                    hashParam = hashVal;
+                }
+            }
             if (hashParam) {
                 log(`Получен хэш комнаты: ${hashParam}`, 'system');
             }
             
             let autoRoom = startParam || hashParam;
-
-            // Восстановление комнаты из localStorage при вылетах/сворачивании приложения
-            if (!autoRoom) {
-                const savedRoom = localStorage.getItem('revolver_active_room');
-                const savedIsCreator = localStorage.getItem('revolver_is_creator') === 'true';
-                if (savedRoom && savedRoom.length >= 2) {
-                    autoRoom = savedRoom;
-                    isCreatorFallback = savedIsCreator;
-                    log(`Обнаружена сохраненная сессия комнаты #${autoRoom}. Восстановление подключения...`, 'system');
-                }
-            }
-
             if (autoRoom && autoRoom.length >= 2) {
                 autoRoom = autoRoom.trim().toUpperCase();
                 document.getElementById('room-input-code').value = autoRoom;
-                log(`Инициирован переход в комнату #${autoRoom}...`, 'system');
-
-                // Определение роли при входе
-                let isCreator = false;
-                if (startParam) {
-                    isCreator = false;
-                } else if (hashParam) {
-                    isCreator = true;
-                } else {
-                    isCreator = isCreatorFallback;
-                }
-
-                joinOnlineRoom(isCreator);
+                log(`Инициирован автопереход в комнату #${autoRoom}...`, 'system');
+                joinOnlineRoom(false);
             } else {
                 history.replaceState(null, null, ' ');
                 showScreen('menu');
@@ -870,7 +853,98 @@
             document.body.removeChild(textArea);
         }
 
+        // --- ГЕНЕРАЦИЯ ПРИГЛАШЕНИЯ И ОТПРАВКА В ЧАТЫ ---
+
+        function inviteFriend() {
+            if (!roomId) return;
+            initAudio();
+            playClickSound(1100, 0.05, 0.15);
+
+            // Создаем красивую прямую ссылку в Telegram Mini App
+            const shareUrl = `https://t.me/${TG_BOT_USERNAME}/${TG_APP_SHORTNAME}?startapp=${roomId}`;
+            const inviteText = `🔫 ВЫЗЫВАЮ ТЕБЯ НА ДУЭЛЬ! 🔫\n\nЯ зарядил револьвер .357 и жду в комнате #${roomId}.\nКто выживет, а кто словит пулю? Заходи, если не струсил! 👇`;
+            
+            // Ссылка, которая вызывает нативный выбор чатов в Telegram
+            const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(inviteText)}`;
+
+            if (tg) {
+                // Используем openLink для шаринговых URL — это исправляет ошибку неработающего приглашения на iOS и Android
+                try {
+                    tg.openLink(telegramShareUrl);
+                } catch (e) {
+                    try {
+                        tg.openTelegramLink(telegramShareUrl);
+                    } catch (err) {
+                        window.open(telegramShareUrl, '_blank');
+                    }
+                }
+            } else {
+                window.open(telegramShareUrl, '_blank');
+            }
+            log(`Ссылка-вызов для комнаты #${roomId} создана.`, 'success');
+        }
+
+        // --- КОПИРОВАНИЕ ПРЯМОЙ ССЫЛКИ ДЛЯ ДРУГИХ МЕССЕНДЖЕРОВ ---
+
+        function copyInviteLink() {
+            if (!roomId) return;
+            initAudio();
+            playClickSound(1100, 0.05, 0.15);
+
+            const shareUrl = `https://t.me/${TG_BOT_USERNAME}/${TG_APP_SHORTNAME}?startapp=${roomId}`;
+            
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    log(`Прямая ссылка для входа скопирована! Вы можете отправить её в WhatsApp, VK, Discord или другие мессенджеры.`, 'success');
+                    showTemporaryLinkFeedback();
+                }).catch(() => {
+                    fallbackCopy(shareUrl);
+                });
+            } else {
+                fallbackCopy(shareUrl);
+            }
+        }
+
+        function showTemporaryLinkFeedback() {
+            const btn = document.getElementById('btn-copy-link');
+            if (btn) {
+                const originalText = btn.innerHTML;
+                btn.innerHTML = `
+                    <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Скопировано!
+                `;
+                btn.className = "bg-emerald-950 text-emerald-400 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-emerald-900/40";
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.className = "bg-gray-800 hover:bg-gray-750 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750";
+                }, 2000);
+            }
+            triggerHaptic('spin');
+        }
+
+        function showTemporaryCopyFeedback() {
+            const span = document.getElementById('copy-indicator');
+            if (span) {
+                const originalText = span.textContent;
+                span.textContent = '(скопировано!)';
+                span.className = 'text-emerald-400 font-bold text-[9px] lowercase transition-colors duration-200';
+                setTimeout(() => {
+                    span.textContent = originalText;
+                    span.className = 'text-gray-500 font-normal lowercase transition-colors duration-200';
+                }, 2000);
+            }
+            triggerHaptic('spin');
+        }
+
         // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через EMQX) ---
+
+        function createOnlineRoom() {
+            const generatedRoom = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
+            document.getElementById('room-input-code').value = generatedRoom;
+            joinOnlineRoom(true);
+        }
 
         function joinOnlineRoom(isCreator = false) {
             const codeField = document.getElementById('room-input-code');
@@ -884,10 +958,6 @@
             isOnlineMode = true;
             roomId = roomCode;
             window.location.hash = roomId;
-
-            // Сохранение сессии для защиты от сброса при сворачивании игры
-            localStorage.setItem('revolver_active_room', roomId);
-            localStorage.setItem('revolver_is_creator', isCreator ? 'true' : 'false');
 
             showScreen('game');
             document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
@@ -1930,10 +2000,6 @@
             document.getElementById('btn-reset-lobby').classList.add('hidden');
             document.getElementById('btn-invite').classList.add('hidden');
             document.getElementById('btn-copy-link').classList.add('hidden');
-
-            // Очистка сохраненной сессии в localStorage
-            localStorage.removeItem('revolver_active_room');
-            localStorage.removeItem('revolver_is_creator');
 
             if (isOnlineMode) {
                 applySyncedVisualState();
