@@ -163,7 +163,7 @@
                             </svg>
                             Пригласить
                         </button>
-                        <button id="btn-copy-link" onclick="copyInviteLink()" class="hidden bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750">
+                        <button id="btn-copy-link" onclick="copyInviteLink()" class="hidden bg-gray-800 hover:bg-gray-750 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 002-2h2a2 2 0 002 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/>
                             </svg>
@@ -1129,11 +1129,12 @@
                     break;
 
                 case 'PROPOSE_REPLAY':
-                    log(`Игрок [${msg.senderName}] предлагает сыграть снова!`, 'system');
+                    log(`Игрок [${msg.senderName}] предлагает сыграть заново!`, 'system');
                     if (!proposedReplayPlayers.some(p => p.id === msg.senderId)) {
                         proposedReplayPlayers.push({ id: msg.senderId, name: msg.senderName });
                     }
                     addReplayNoticeToOverlay(msg.senderName, msg.senderId);
+                    renderOverlayReplayButtons(); // Обновляем состояние кнопок переигровки
                     break;
             }
         }
@@ -1291,13 +1292,20 @@
                 isCylinderClosed = true;
                 applyCylinderCoverState();
 
+                // ОПРЕДЕЛЯЕМ ПЕРВОГО СТРЕЛКА СЛУЧАЙНЫМ ОБРАЗОМ
+                currentPlayerIndex = Math.floor(Math.random() * players.length);
+                log(`Случайный выбор: Первым стреляет [${players[currentPlayerIndex].name}]`, 'system');
+
                 sendStateSyncPayload();
             } else {
                 players.forEach((p, i) => {
                     if(!p.name) p.name = `Игрок ${i+1}`;
                 });
                 isGameSessionActive = true;
-                currentPlayerIndex = 0;
+                
+                // ОПРЕДЕЛЯЕМ ПЕРВОГО СТРЕЛКА СЛУЧАЙНЫМ ОБРАЗОМ
+                currentPlayerIndex = Math.floor(Math.random() * players.length);
+                log(`Случайный выбор: Первым стреляет [${players[currentPlayerIndex].name}]`, 'system');
                 
                 document.getElementById('lobby-panel').classList.add('hidden');
                 document.getElementById('cylinder-visual-box').classList.remove('hidden');
@@ -1311,7 +1319,7 @@
 
                 isCylinderClosed = true;
                 applyCylinderCoverState();
-                log('Оффлайн раунд начат. Дилер закрыл каморы.', 'system');
+                log('Оффлайн раунд начат. Дилер скрыл каморы.', 'system');
             }
             updatePlayersUI();
         }
@@ -1701,12 +1709,9 @@
             const overlay = document.getElementById('game-overlay');
             const title = document.getElementById('overlay-title');
             const msg = document.getElementById('overlay-message');
-            const btn = document.getElementById('overlay-btn');
 
-            const isHost = amIHost();
-
-            btn.onclick = null; 
-            btn.disabled = false;
+            overlay.classList.remove('opacity-0', 'pointer-events-none');
+            overlay.classList.add('opacity-100');
 
             if (isMatchOver) {
                 const alivePlayers = players.filter(p => p.isAlive);
@@ -1721,57 +1726,20 @@
                     <div id="replay-notices-container" class="mt-4 border-t border-zinc-800 pt-3 space-y-1"></div>
                 `;
 
-                if (isOnlineMode) {
-                    if (isHost) {
-                        btn.textContent = "Новый раунд";
-                        btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
-                        btn.onclick = () => {
-                            resetRoundNetwork();
-                        };
-                    } else {
-                        if (proposedReplayPlayers.some(p => p.id === myClientId)) {
-                            btn.textContent = "Предложение отправлено";
-                            btn.disabled = true;
-                            btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
-                        } else {
-                            btn.textContent = "Предложить сыграть снова";
-                            btn.className = "w-full px-8 py-4 bg-amber-600 hover:bg-amber-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(245,158,11,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-amber-400 cursor-pointer";
-                            btn.onclick = () => {
-                                proposeReplayFromGuest();
-                            };
-                        }
-                    }
-                } else {
-                    btn.textContent = "В главное меню";
-                    btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
-                    btn.onclick = () => {
-                        resetFullSession();
-                    };
-                }
-
-                // Отображение сетевых уведомлений о переигровке
-                const noticesContainer = document.getElementById('replay-notices-container');
-                if (noticesContainer) {
-                    proposedReplayPlayers.forEach(p => {
-                        const noticeId = `replay-notice-${p.id}`;
-                        if (!document.getElementById(noticeId)) {
-                            const notice = document.createElement('div');
-                            notice.id = noticeId;
-                            notice.className = "text-emerald-400 mt-2 text-xs font-bold uppercase tracking-wider animate-pulse";
-                            notice.textContent = `⚡ Игрок ${p.name} хочет сыграть снова!`;
-                            noticesContainer.appendChild(notice);
-                        }
-                    });
-                }
+                // Отрисовка динамических кнопок
+                renderOverlayReplayButtons();
             } else {
                 title.textContent = "КИЛЛ";
                 title.className = "text-5xl font-bold text-red-600 tracking-wider mb-4 drop-shadow-[0_4px_10px_rgba(239,68,68,0.4)]";
                 msg.innerHTML = `<div class="text-gray-100 text-sm mb-6 uppercase tracking-wider leading-relaxed">Игрок <span class="text-red-500 font-bold">${deadPlayer ? deadPlayer.name : 'Игрок'}</span> выбыл из очереди смертников.</div>`;
                 
+                const btn = document.getElementById('overlay-btn');
+                btn.onclick = null;
+                btn.disabled = false;
                 btn.className = "w-full px-8 py-4 bg-red-600 hover:bg-red-500 text-white font-extrabold rounded-md shadow-[0_0_20px_rgba(239,68,68,0.6)] hover:shadow-[0_0_30px_rgba(239,68,68,0.95)] transition-all duration-200 uppercase text-sm tracking-widest border border-red-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed";
 
                 if (isOnlineMode) {
-                    if (isHost) {
+                    if (amIHost()) {
                         btn.textContent = "Продолжить дуэль";
                         btn.onclick = () => {
                             closeOverlayAndContinue();
@@ -1788,17 +1756,82 @@
                     };
                 }
             }
-
-            overlay.classList.remove('opacity-0', 'pointer-events-none');
-            overlay.classList.add('opacity-100');
         }
 
-        // --- ПРЕДЛОЖЕНИЕ СЫГРАТЬ СНОВА (ОНЛАЙН) ---
+        // --- ДИНАМИЧЕСКИЙ СИММЕТРИЧНЫЙ ВЫБОР КНОПОК ПЕРЕИГРОВКИ ---
 
-        function proposeReplayFromGuest() {
-            if (!isOnlineMode) return;
+        function renderOverlayReplayButtons() {
+            const btn = document.getElementById('overlay-btn');
+            if (!btn) return;
+
+            btn.onclick = null;
+            btn.disabled = false;
+
+            if (isOnlineMode) {
+                const hasIProposed = proposedReplayPlayers.some(p => p.id === myClientId);
+                const haveAllOthersProposed = players.every(p => p.id === myClientId || proposedReplayPlayers.some(pr => pr.id === p.id));
+
+                if (!hasIProposed) {
+                    // Я еще не предлагал сыграть снова
+                    btn.textContent = "Предложить сыграть снова";
+                    btn.disabled = false;
+                    btn.className = "w-full px-8 py-4 bg-amber-600 hover:bg-amber-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(245,158,11,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-amber-400 cursor-pointer";
+                    btn.onclick = () => {
+                        proposeReplayFromLocal();
+                    };
+                } else {
+                    // Я уже согласился на переигровку
+                    if (haveAllOthersProposed) {
+                        // Все игроки согласились!
+                        if (amIHost()) {
+                            // Дилер может запустить матч
+                            btn.textContent = "Начать новый матч";
+                            btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
+                            btn.onclick = () => {
+                                resetRoundNetwork();
+                            };
+                        } else {
+                            // Гость ждет, пока Дилер физически нажмет старт
+                            btn.textContent = "Ожидание запуска дилером...";
+                            btn.disabled = true;
+                            btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+                        }
+                    } else {
+                        // Я согласился, но оппонент еще нет
+                        btn.textContent = "Ожидание согласия...";
+                        btn.disabled = true;
+                        btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+                    }
+                }
+            } else {
+                // Оффлайн режим
+                btn.textContent = "В главное меню";
+                btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
+                btn.onclick = () => {
+                    resetFullSession();
+                };
+            }
+
+            // Обновляем список уведомлений на оверлее
+            const container = document.getElementById('replay-notices-container');
+            if (container) {
+                container.innerHTML = '';
+                proposedReplayPlayers.forEach(p => {
+                    const notice = document.createElement('div');
+                    notice.className = "text-emerald-400 mt-2 text-xs font-bold uppercase tracking-wider animate-pulse";
+                    notice.textContent = `⚡ Игрок ${p.name} хочет сыграть снова!`;
+                    container.appendChild(notice);
+                });
+            }
+        }
+
+        function proposeReplayFromLocal() {
             initAudio();
             playClickSound(1100, 0.05, 0.15);
+
+            if (!proposedReplayPlayers.some(p => p.id === myClientId)) {
+                proposedReplayPlayers.push({ id: myClientId, name: myName });
+            }
 
             sendNetworkPayload({
                 type: 'PROPOSE_REPLAY',
@@ -1806,17 +1839,14 @@
                 senderId: myClientId
             }, 0);
 
-            log('Вы предложили сыграть заново. Ожидание хоста...', 'system');
+            log('Вы предложили сыграть заново.', 'system');
+            renderOverlayReplayButtons();
+        }
 
-            const btn = document.getElementById('overlay-btn');
-            btn.textContent = "Предложение отправлено";
-            btn.disabled = true;
-            btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+        // --- ПРЕДЛОЖЕНИЕ СЫГРАТЬ СНОВА (ОНЛАЙН) ---
 
-            if (!proposedReplayPlayers.some(p => p.id === myClientId)) {
-                proposedReplayPlayers.push({ id: myClientId, name: myName });
-            }
-            addReplayNoticeToOverlay(myName, myClientId);
+        function proposeReplayFromGuest() {
+            proposeReplayFromLocal();
         }
 
         function addReplayNoticeToOverlay(name, id) {
