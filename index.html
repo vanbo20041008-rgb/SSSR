@@ -913,7 +913,7 @@
                 btn.className = "bg-emerald-950 text-emerald-400 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-emerald-900/40";
                 setTimeout(() => {
                     btn.innerHTML = originalText;
-                    btn.className = "bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750";
+                    btn.className = "bg-gray-800 hover:bg-gray-750 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750";
                 }, 2000);
             }
             triggerHaptic('spin');
@@ -943,7 +943,7 @@
             showScreen('game');
             document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
             
-            // Делаем видимыми кнопку нативного приглашения и кнопку копирования ссылки
+            // Делаем видимой кнопку нативного приглашения и кнопку копирования ссылки
             document.getElementById('btn-invite').classList.remove('hidden');
             document.getElementById('btn-copy-link').classList.remove('hidden');
 
@@ -1090,7 +1090,7 @@
                             players.push({ id: msg.id, name: msg.name, isAlive: true });
                             log(`Игрок [${msg.name}] успешно вошел в лобби.`, 'success');
                         } else {
-                            log(`Игрок [${msg.name}] переподключается...`, 'system');
+                            log(`Игрок [${msg.name}] переподключился...`, 'system');
                         }
                         sendStateSyncPayload();
                     }
@@ -1146,8 +1146,10 @@
                 case 'REQUEST_FIRE':
                     if (amIHost()) {
                         const expectedShooter = players[currentPlayerIndex];
-                        // Проверяем, что запрос действительно пришел от активного игрока
-                        if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
+                        // Важно: убрали проверку !isAnimating на стороне Хоста.
+                        // Даже если Хост еще проигрывает кусок анимации, он обработает
+                        // валидный сетевой запрос выстрела и гарантированно разошлет его всем.
+                        if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive) {
                             processShotAndBroadcast();
                         }
                     }
@@ -1156,12 +1158,6 @@
                 case 'FIRE_RESULT':
                     // Принудительно запускаем выстрел с едиными параметрами от Хоста для всех участников
                     executeFireSequence(msg.isLethal, msg.activeIndex, msg.chambers, msg.players, msg.currentPlayerIndex, msg.shooterId);
-                    break;
-
-                case 'GAME_START':
-                    isGameSessionActive = true;
-                    log('Дуэль началась! Барабан скрыт.', 'system');
-                    applySyncedVisualState();
                     break;
 
                 case 'RESET_ROUND':
@@ -1332,7 +1328,8 @@
                 isCylinderClosed = true;
                 applyCylinderCoverState();
 
-                sendNetworkPayload({ type: 'GAME_START' });
+                // Убрали дублирующий пакет GAME_START. Все данные старта передаются 
+                // через единый пакет SYNC, что исключает сетевые рассинхроны при запуске.
                 sendStateSyncPayload();
             } else {
                 players.forEach((p, i) => {
@@ -1551,9 +1548,16 @@
                     // Хост рассчитывает выстрел и рассылает результат всем
                     processShotAndBroadcast();
                 } else {
-                    // Гость просит сделать выстрел
+                    // Отключаем кнопку сразу же на стороне Гостя локально во избежание двойных кликов.
+                    // Флаг isAnimating при этом не ставится в true на стороне Гостя — это страхует игру
+                    // от постоянной блокировки в случае сетевых задержек.
+                    const fireBtn = document.getElementById('btn-fire');
+                    if (fireBtn) {
+                        fireBtn.disabled = true;
+                        fireBtn.textContent = "ВЫСТРЕЛ...";
+                        fireBtn.className = "flex-1 bg-gray-900 border border-gray-880 text-gray-600 font-bold py-3.5 px-6 rounded-md uppercase tracking-wider cursor-not-allowed";
+                    }
                     sendNetworkPayload({ type: 'REQUEST_FIRE' });
-                    isAnimating = true; // Блокировка кнопки на время ожидания пакета
                 }
             } else {
                 // Оффлайн дуэль
