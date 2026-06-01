@@ -964,7 +964,7 @@
                             
                             guestJoinTimer = setInterval(() => {
                                 if (players.length > 0) {
-                                    // Если мы успешно получили SYNC и заполнили список игроков — прекращаем долбиться к хосту
+                                    // Если мы успешно получили SYNC и заполнили список игроков — прекращаем слать JOIN
                                     clearInterval(guestJoinTimer);
                                     guestJoinTimer = null;
                                     return;
@@ -1021,7 +1021,7 @@
             }
         }
 
-        // --- СЕТЕВОЙ ГОЛОВНОЙ ДИСПЕТЧЕР (LOCKSTEP) ---
+        // --- СЕТЕВОЙ ГОЛОВНОЙ ДИСПЕТЧЕР (LOCKSTEP & AUTHORITATIVE) ---
 
         function handleIncomingNetworkMessage(msg) {
             switch (msg.type) {
@@ -1033,45 +1033,51 @@
                         } else {
                             log(`Игрок [${msg.name}] переподключается...`, 'system');
                         }
-                        // Высылаем полный актуальный снимок состояния гостю
                         sendStateSyncPayload();
                     }
                     break;
 
                 case 'SYNC':
-                    // Успешный ответ от хоста. Выключаем цикличный таймер на сопряжение
                     if (guestJoinTimer) {
                         clearInterval(guestJoinTimer);
                         guestJoinTimer = null;
                         log("Синхронизация с Хостом успешно завершена!", "success");
                     }
                     
-                    players = msg.players;
-                    chambers = msg.chambers;
-                    activeIndex = msg.activeIndex;
-                    isCylinderClosed = msg.isCylinderClosed;
-                    currentPlayerIndex = msg.currentPlayerIndex;
-                    isGameSessionActive = msg.isGameSessionActive;
-
-                    applySyncedVisualState();
+                    // Обновляем состояние синхронизации, только если не идет активная анимация выстрела
+                    if (!isAnimating) {
+                        players = msg.players;
+                        chambers = msg.chambers;
+                        activeIndex = msg.activeIndex;
+                        isCylinderClosed = msg.isCylinderClosed;
+                        currentPlayerIndex = msg.currentPlayerIndex;
+                        isGameSessionActive = msg.isGameSessionActive;
+                        applySyncedVisualState();
+                    }
                     break;
 
                 case 'LOAD_CHAMBER':
-                    chambers = msg.chambers;
-                    playClickSound(1100, 0.04, 0.15);
-                    renderChambers();
+                    if (!isAnimating) {
+                        chambers = msg.chambers;
+                        playClickSound(1100, 0.04, 0.15);
+                        renderChambers();
+                    }
                     break;
 
                 case 'EXTRACT':
-                    playExtractorSound();
-                    chambers = [0, 0, 0, 0, 0, 0];
-                    renderChambers();
+                    if (!isAnimating) {
+                        playExtractorSound();
+                        chambers = [0, 0, 0, 0, 0, 0];
+                        renderChambers();
+                    }
                     break;
 
                 case 'CYLINDER_TOGGLE':
-                    isCylinderClosed = msg.closed;
-                    applyCylinderCoverState();
-                    updatePlayersUI();
+                    if (!isAnimating) {
+                        isCylinderClosed = msg.closed;
+                        applyCylinderCoverState();
+                        updatePlayersUI();
+                    }
                     break;
 
                 case 'SPIN_RUN':
@@ -1081,23 +1087,16 @@
                 case 'REQUEST_FIRE':
                     if (amIHost()) {
                         const expectedShooter = players[currentPlayerIndex];
+                        // Проверяем, что запрос действительно пришел от активного игрока
                         if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
-                            sendNetworkPayload({
-                                type: 'TRIGGER_FIRE',
-                                activeIndex: activeIndex,
-                                chambers: chambers,
-                                currentPlayerIndex: currentPlayerIndex
-                            });
-                            executeFireSequence();
+                            processShotAndBroadcast();
                         }
                     }
                     break;
 
-                case 'TRIGGER_FIRE':
-                    activeIndex = msg.activeIndex;
-                    chambers = msg.chambers;
-                    currentPlayerIndex = msg.currentPlayerIndex;
-                    executeFireSequence();
+                case 'FIRE_RESULT':
+                    // Принудительно запускаем выстрел с едиными параметрами от Хоста для всех участников
+                    executeFireSequence(msg.isLethal, msg.activeIndex, msg.chambers, msg.players, msg.currentPlayerIndex, msg.shooterId);
                     break;
 
                 case 'GAME_START':
@@ -1480,6 +1479,8 @@
             }, spinDuration * 1000);
         }
 
+        // --- РАСЧЕТ И ОТПРАВКА РЕЗУЛЬТАТОВ ВЫСТРЕЛА ---
+
         function fireRevolver() {
             if (isAnimating) return;
             if (!isCylinderClosed) return;
@@ -1488,23 +1489,87 @@
 
             if (isOnlineMode) {
                 if (amIHost()) {
-                    sendNetworkPayload({ 
-                        type: 'TRIGGER_FIRE',
-                        activeIndex: activeIndex,
-                        chambers: chambers,
-                        currentPlayerIndex: currentPlayerIndex
-                    });
-                    executeFireSequence();
+                    // Хост рассчитывает выстрел и рассылает результат всем
+                    processShotAndBroadcast();
                 } else {
+                    // Гость просит сделать выстрел
                     sendNetworkPayload({ type: 'REQUEST_FIRE' });
-                    isAnimating = true; 
+                    isAnimating = true; // Блокировка кнопки на время ожидания пакета
                 }
             } else {
-                executeFireSequence();
+                // Оффлайн дуэль
+                processOfflineShot();
             }
         }
 
-        function executeFireSequence() {
+        function processShotAndBroadcast() {
+            const shooter = players[currentPlayerIndex];
+            const isLethal = (chambers[activeIndex] === 1);
+            
+            let updatedChambers = [...chambers];
+            let updatedPlayers = JSON.parse(JSON.stringify(players));
+            let nextPlayerIndex = currentPlayerIndex;
+
+            if (isLethal) {
+                updatedChambers[activeIndex] = 2; // патрон отстрелен, осталась гильза
+                const deadIdx = updatedPlayers.findIndex(p => p.id === shooter.id);
+                if (deadIdx !== -1) {
+                    updatedPlayers[deadIdx].isAlive = false;
+                }
+            } else {
+                // Осечка, высчитываем очередь на следующий ход
+                let searchCount = 0;
+                do {
+                    nextPlayerIndex = (nextPlayerIndex + 1) % updatedPlayers.length;
+                    searchCount++;
+                    if (searchCount > updatedPlayers.length * 2) break;
+                } while (!updatedPlayers[nextPlayerIndex].isAlive);
+            }
+
+            // Рассылаем финальный просчитанный результат абсолютно всем гостям
+            sendNetworkPayload({
+                type: 'FIRE_RESULT',
+                activeIndex: activeIndex,
+                isLethal: isLethal,
+                chambers: updatedChambers,
+                players: updatedPlayers,
+                currentPlayerIndex: nextPlayerIndex,
+                shooterId: shooter.id
+            });
+
+            // Локальный запуск анимации выстрела у самого себя
+            executeFireSequence(isLethal, activeIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
+        }
+
+        function processOfflineShot() {
+            const shooter = players[currentPlayerIndex];
+            const isLethal = (chambers[activeIndex] === 1);
+            
+            let updatedChambers = [...chambers];
+            let updatedPlayers = JSON.parse(JSON.stringify(players));
+            let nextPlayerIndex = currentPlayerIndex;
+
+            if (isLethal) {
+                updatedChambers[activeIndex] = 2;
+                const deadIdx = updatedPlayers.findIndex(p => p.id === shooter.id);
+                if (deadIdx !== -1) {
+                    updatedPlayers[deadIdx].isAlive = false;
+                }
+            } else {
+                let searchCount = 0;
+                do {
+                    nextPlayerIndex = (nextPlayerIndex + 1) % updatedPlayers.length;
+                    searchCount++;
+                    if (searchCount > updatedPlayers.length * 2) break;
+                } while (!updatedPlayers[nextPlayerIndex].isAlive);
+            }
+
+            executeFireSequence(isLethal, activeIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
+        }
+
+        // --- ЕДИНАЯ СИНХРОННАЯ АНИМАЦИЯ ВЫСТРЕЛА ---
+
+        function executeFireSequence(isLethal, shotIndex, nextChambers, nextPlayers, nextPlayerIdx, shooterId) {
             isAnimating = true;
 
             const hammer = document.getElementById('gun-hammer');
@@ -1512,13 +1577,14 @@
             const gunBodyGroup = document.getElementById('gun-body-group');
             const cylinderFace = document.getElementById('cylinder-face-svg');
 
-            const shooter = players[currentPlayerIndex];
+            const shooter = nextPlayers.find(p => p.id === shooterId);
             log(`[${shooter ? shooter.name : 'Игрок'}] нажал на спуск...`, 'default');
             
             hammer.style.transform = 'rotate(-32deg)';
             trigger.style.transform = 'rotate(-15deg)';
             playCockSound();
 
+            // 1. Поворот барабана
             setTimeout(() => {
                 activeIndex = (activeIndex + 1) % 6;
                 document.getElementById('active-chamber-num').textContent = `#${activeIndex + 1}`;
@@ -1527,13 +1593,12 @@
                 cylinderFace.style.transform = `rotate(${-activeIndex * 60}deg)`;
             }, 100);
 
+            // 2. Спуск курка и выстрел
             setTimeout(() => {
                 hammer.style.transform = 'rotate(0deg)';
                 trigger.style.transform = 'rotate(0deg)';
 
-                const hasBullet = (chambers[activeIndex] === 1);
-
-                if (hasBullet) {
+                if (isLethal) {
                     playGunshotSound();
                     triggerHaptic('shot');
                     
@@ -1541,69 +1606,63 @@
                     document.getElementById('muzzle-flash').classList.add('flash-active');
                     document.body.classList.add('shake-screen');
 
-                    chambers[activeIndex] = 2; // гильза отстрелена
-                    if (shooter) shooter.isAlive = false;
-
-                    updatePlayersUI(); 
-
                     log(`[${shooter ? shooter.name : 'Игрок'}] - СМЕРТЕЛЬНЫЙ ВЫСТРЕЛ!`, 'danger');
-
-                    if (isOnlineMode && amIHost()) {
-                        sendStateSyncPayload();
-                    }
-
-                    setTimeout(() => {
-                        handleShotOutcome(shooter);
-                    }, 150);
-
                 } else {
                     playEmptyClickSound();
                     triggerHaptic('click');
                     gunBodyGroup.classList.add('misfire-active');
 
                     log(`[${shooter ? shooter.name : 'Игрок'}] - ОБЛЕГЧЕНИЕ. Осечка!`, 'success');
-
-                    setTimeout(() => {
-                        gunBodyGroup.classList.remove('misfire-active');
-                        isAnimating = false;
-                        
-                        passTurn();
-                    }, 300);
                 }
 
+                // 3. Завершение анимации и жесткое выравнивание игрового состояния
                 setTimeout(() => {
-                    gunBodyGroup.classList.remove('recoil-active');
+                    // Убираем классы анимаций
+                    gunBodyGroup.classList.remove('recoil-active', 'misfire-active');
                     document.getElementById('muzzle-flash').classList.remove('flash-active');
                     document.body.classList.remove('shake-screen');
-                }, 600);
+
+                    // Обновляем состояние до того, что прислал Хост
+                    chambers = nextChambers;
+                    players = nextPlayers;
+                    currentPlayerIndex = nextPlayerIdx;
+                    activeIndex = shotIndex; // Выравниваем индекс каморы с хостом
+
+                    renderChambers();
+                    updatePlayersUI();
+
+                    // Запускаем проверку состояния игры
+                    checkGameStatus(isLethal ? shooter : null);
+
+                }, 450); // Даем анимации отыграть
 
             }, 250);
         }
 
-        function passTurn() {
+        // --- СИНХРОННАЯ ПРОВЕРКА СТАТУСА ДУЭЛИ И ОТКРЫТИЕ ОВЕРЛЕЕВ ---
+
+        function checkGameStatus(deadPlayer) {
             const alivePlayers = players.filter(p => p.isAlive);
-            if (alivePlayers.length <= 1) return;
-
-            let nextIndex = currentPlayerIndex;
-            let searchCount = 0;
-            do {
-                nextIndex = (nextIndex + 1) % players.length;
-                searchCount++;
-                if (searchCount > players.length * 2) break; 
-            } while (!players[nextIndex].isAlive);
-
-            currentPlayerIndex = nextIndex;
-            updatePlayersUI();
-
-            if (isOnlineMode && amIHost()) {
-                sendStateSyncPayload();
+            
+            if (alivePlayers.length <= 1) {
+                // Игра окончена! Выжило 0 или 1 игрок
+                isGameSessionActive = false;
+                isAnimating = false;
+                showShotOutcomeOverlay(deadPlayer, true);
+            } else if (deadPlayer) {
+                // Игрок погиб, но дуэль продолжается (в лобби осталось 2 или более живых)
+                isAnimating = false;
+                showShotOutcomeOverlay(deadPlayer, false);
+            } else {
+                // Простая осечка — разблокируем анимацию и передаем ход
+                isAnimating = false;
+                updatePlayersUI();
             }
         }
 
         // --- ДИНАМИЧЕСКИЙ ОБРАБОТЧИК КНОПОК ОВЕРЛЕЯ ---
 
-        function handleShotOutcome(deadPlayer) {
-            const alivePlayers = players.filter(p => p.isAlive);
+        function showShotOutcomeOverlay(deadPlayer, isMatchOver) {
             const overlay = document.getElementById('game-overlay');
             const title = document.getElementById('overlay-title');
             const msg = document.getElementById('overlay-message');
@@ -1614,7 +1673,8 @@
             btn.onclick = null; 
             btn.disabled = false;
 
-            if (alivePlayers.length <= 1) {
+            if (isMatchOver) {
+                const alivePlayers = players.filter(p => p.isAlive);
                 const winner = alivePlayers[0] || { name: "Никто" };
                 title.textContent = "ПОБЕДИТЕЛЬ!";
                 title.className = "text-5xl font-black text-emerald-500 tracking-wider mb-4 drop-shadow-[0_4px_10px_rgba(16,185,129,0.4)]";
@@ -1654,6 +1714,7 @@
                     };
                 }
 
+                // Отображение сетевых уведомлений о переигровке
                 const noticesContainer = document.getElementById('replay-notices-container');
                 if (noticesContainer) {
                     proposedReplayPlayers.forEach(p => {
@@ -1743,15 +1804,8 @@
             
             isAnimating = false;
             
-            let nextIndex = currentPlayerIndex;
-            let searchCount = 0;
-            do {
-                nextIndex = (nextIndex + 1) % players.length;
-                searchCount++;
-                if (searchCount > players.length * 2) break; 
-            } while (!players[nextIndex].isAlive);
-
-            currentPlayerIndex = nextIndex;
+            // Внимание: очередь хода больше не вычисляется здесь. Она уже идеально переключена 
+            // в executeFireSequence! Это гарантирует отсутствие перескоков ходов при закрытии оверлея.
             
             if (isOnlineMode && amIHost()) {
                 sendStateSyncPayload();
