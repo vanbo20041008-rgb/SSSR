@@ -501,7 +501,6 @@
         let isGameSessionActive = false;
         let proposedReplayPlayers = []; // Накопленный список игроков, пожелавших сыграть снова
         let lastDeadPlayer = null;      // Хранилище имени последнего погибшего игрока для перерисовки оверлея
-        let currentDealerId = null;     // Идентификатор игрока, выполняющего роль дилера в текущей сетевой комнате
 
         // Состояние револьвера
         let chambers = [0, 0, 0, 0, 0, 0]; // 0 - пусто, 1 - боевой, 2 - отстрелянная гильза
@@ -698,19 +697,85 @@
 
         // --- ИНИЦИАЛИЗАЦИЯ И ИНТЕРФЕЙС ---
 
+        window.addEventListener('DOMContentLoaded', () => {
+            // Считывание данных Telegram: формируем полное имя или юзернейм
+            if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                const user = tg.initDataUnsafe.user;
+                const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ');
+                myName = fullName || user.username || "Игрок";
+                log(`Загружен профиль Telegram: ${myName}`, 'success');
+            } else {
+                myName = "Игрок_" + Math.floor(100 + Math.random() * 900);
+            }
+
+            // Пытаемся считать start_param из SDK
+            let startParam = null;
+            if (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) {
+                startParam = tg.initDataUnsafe.start_param;
+                log(`Получен start_param из Telegram SDK: ${startParam}`, 'system');
+            }
+            
+            // Резервный парсинг start_param прямо из URL фрейма
+            if (!startParam) {
+                const urlParams = new URLSearchParams(window.location.search);
+                startParam = urlParams.get('tgWebAppStartParam') || urlParams.get('startapp');
+                if (startParam) {
+                    log(`Получен start_param из URL фрейма: ${startParam}`, 'system');
+                }
+            }
+
+            // Чтение хэша с жесткой фильтрацией служебных данных Telegram (tgWebAppData)
+            let hashParam = null;
+            if (window.location.hash) {
+                const hashVal = window.location.hash.substring(1);
+                if (hashVal && !hashVal.startsWith('tgWebAppData') && !hashVal.includes('tgWebAppData')) {
+                    hashParam = hashVal;
+                }
+            }
+            if (hashParam) {
+                log(`Получен хэш комнаты: ${hashParam}`, 'system');
+            }
+            
+            let autoRoom = startParam || hashParam;
+            if (autoRoom && autoRoom.length >= 2) {
+                autoRoom = autoRoom.trim().toUpperCase();
+                document.getElementById('room-input-code').value = autoRoom;
+                log(`Инициирован автопереход в комнату #${autoRoom}...`, 'system');
+                
+                // Проверяем, являемся ли мы создателем этой комнаты по флагам sessionStorage
+                const isCreator = sessionStorage.getItem(`revolver_created_room_${autoRoom}`) === 'true';
+                joinOnlineRoom(isCreator);
+            } else {
+                history.replaceState(null, null, ' ');
+                showScreen('menu');
+            }
+
+            renderChambers();
+            updateRisk();
+        });
+
+        function triggerHaptic(type) {
+            if (tg && tg.HapticFeedback) {
+                if (type === 'spin') tg.HapticFeedback.impactOccurred('light');
+                if (type === 'click') tg.HapticFeedback.impactOccurred('medium');
+                if (type === 'shot') tg.HapticFeedback.notificationOccurred('error');
+            }
+        }
+
+        // Надежное переключение экранов без возможности дублирования
         function showScreen(screen) {
             const menu = document.getElementById('screen-menu');
             const game = document.getElementById('screen-game');
             if (screen === 'menu') {
+                menu.style.display = 'block';
                 menu.classList.remove('hidden');
-                menu.style.setProperty('display', 'block', 'important');
+                game.style.display = 'none';
                 game.classList.add('hidden');
-                game.style.setProperty('display', 'none', 'important');
             } else if (screen === 'game') {
+                menu.style.display = 'none';
                 menu.classList.add('hidden');
-                menu.style.setProperty('display', 'none', 'important');
+                game.style.display = ''; // Сбрасываем дисплей на стандартный сеточный из tailwind
                 game.classList.remove('hidden');
-                game.style.setProperty('display', 'grid', 'important');
             }
         }
 
@@ -924,10 +989,8 @@
 
             if (isCreator) {
                 players = [{ id: myClientId, name: myName, isAlive: true }];
-                currentDealerId = myClientId; // Создатель комнаты - первый дилер
             } else {
                 players = [];
-                currentDealerId = null; // Ждем синхронизации от дилера
             }
 
             applySyncedVisualState();
@@ -1077,10 +1140,7 @@
                     break;
 
                 case 'SYNC':
-                    // Синхронизируем текущего дилера для всей комнаты
-                    currentDealerId = msg.currentDealerId;
-
-                    // Гость считает синхронизацию выполненной только в том случае, если дилер внес его в игровое лобби
+                    // Гость считает синхронизацию выполненной только в том случае, если хост внес его в игровое лобби
                     const amIInList = msg.players.some(p => p.id === myClientId);
                     
                     if (amIInList) {
@@ -1162,7 +1222,7 @@
                         if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
                             processShotAndBroadcast();
                         } else {
-                            // Возвращаем SYNC гостю при рассинхронизации
+                            // Принудительно возвращаем SYNC гостю, если он нажал выстрел при рассинхроне или микрозадержке анимации
                             sendStateSyncPayload();
                         }
                     }
@@ -1177,10 +1237,10 @@
                     break;
 
                 case 'RESET_ROUND':
-                    currentDealerId = msg.nextDealerId; // Переназначаем дилера для всех клиентов комнаты
+                    if (msg.players) {
+                        players = msg.players; // Сохраняем перетасованный порядок игроков (со сменой дилера)
+                    }
                     resetFullSessionLocal();
-                    const nextDealerObj = players.find(p => p.id === currentDealerId);
-                    log(`Новым дилером назначен игрок: [${nextDealerObj ? nextDealerObj.name : 'Неизвестный'}]`, 'system');
                     break;
 
                 case 'PROPOSE_REPLAY':
@@ -1200,10 +1260,7 @@
 
         function amIHost() {
             if (!isOnlineMode) return true;
-            if (!currentDealerId && players.length > 0) {
-                currentDealerId = players[0].id; // Резервное определение на случай отсутствия
-            }
-            return currentDealerId === myClientId;
+            return players.length > 0 && players[0].id === myClientId;
         }
 
         function sendStateSyncPayload() {
@@ -1215,8 +1272,7 @@
                 activeIndex: activeIndex,
                 isCylinderClosed: isCylinderClosed,
                 currentPlayerIndex: currentPlayerIndex,
-                isGameSessionActive: isGameSessionActive,
-                currentDealerId: currentDealerId // Передаем актуального дилера
+                isGameSessionActive: isGameSessionActive
             }, 1); // QoS 1 для транзакций настройки лобби
             log(`Отправлена сетевая синхронизация. Игроков в лобби: ${players.length}`, 'system');
             updatePlayersUI();
@@ -1287,36 +1343,25 @@
             showScreen('game');
             document.getElementById('session-label').innerHTML = 'Локальная дуэль (Hot-Seat)';
             
-            // Прячем меню настройки и мгновенно активируем матч
-            document.getElementById('lobby-panel').classList.add('hidden');
-            document.getElementById('wait-message-box').classList.add('hidden');
-            document.getElementById('cylinder-visual-box').classList.remove('hidden');
-            document.getElementById('btn-start-game').classList.add('hidden');
-            document.getElementById('quick-action-row').classList.add('hidden');
+            document.getElementById('lobby-panel').classList.remove('hidden');
+            document.getElementById('btn-start-game').classList.remove('hidden');
+            document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
+            document.getElementById('btn-reset-lobby').classList.add('hidden');
             
-            document.getElementById('btn-reset-lobby').classList.remove('hidden');
+            document.getElementById('cylinder-visual-box').classList.add('hidden');
+            document.getElementById('wait-message-box').classList.add('hidden');
 
-            // Создаем участников локальной игры
+            document.getElementById('btn-load-1').classList.remove('hidden');
+            document.getElementById('btn-load-3').classList.remove('hidden');
+            document.getElementById('btn-extract').classList.remove('hidden');
+            document.getElementById('quick-action-row').classList.remove('hidden');
+
             players = [
                 { id: 'local_1', name: myName, isAlive: true },
-                { id: 'local_2', name: "Соперник", isAlive: true }
+                { id: 'local_2', name: "Игрок 2", isAlive: true }
             ];
-
-            // МГНОВЕННЫЙ ЗАПУСК: Сразу заряжаем 1 патрон в случайную камору и закрываем барабан
-            chambers = [0, 0, 0, 0, 0, 0];
-            const bulletIndex = Math.floor(Math.random() * 6);
-            chambers[bulletIndex] = 1;
-
-            isCylinderClosed = true;
-            isGameSessionActive = true;
-            currentPlayerIndex = 0;
-            activeIndex = Math.floor(Math.random() * 6); // Случайное положение барабана на старте
-
-            applyCylinderCoverState();
+            renderLobbyInputs();
             updatePlayersUI();
-
-            log(`Локальный матч начат автоматически! Заряжен 1 случайный патрон в камору #${bulletIndex + 1}.`, 'success');
-            log(`Первый стреляет: [${players[currentPlayerIndex].name}].`, 'system');
         }
 
         function renderLobbyInputs() {
@@ -1369,6 +1414,9 @@
                 document.getElementById('lobby-panel').classList.add('hidden');
                 document.getElementById('cylinder-visual-box').classList.remove('hidden');
                 document.getElementById('btn-start-game').classList.add('hidden');
+                document.getElementById('btn-load-1').classList.add('hidden');
+                document.getElementById('btn-load-3').classList.add('hidden');
+                document.getElementById('btn-extract').classList.add('hidden');
                 document.getElementById('quick-action-row').classList.add('hidden');
                 
                 document.getElementById('btn-reset-lobby').classList.remove('hidden');
@@ -1435,25 +1483,9 @@
             }
 
             const isHost = amIHost();
-            const isMatchRunning = isGameSessionActive;
+            const canManageCylinder = isHost && !isGameSessionActive; // Дилер может управлять содержимым ТОЛЬКО вне активного матча
             
-            // Если игра уже идет - ПОЛНОСТЬЮ блокируем и скрываем возможность снаряжения и откидывания барабана
-            if (isMatchRunning) {
-                document.getElementById('quick-action-row').classList.add('hidden');
-                document.getElementById('btn-toggle-cylinder').classList.add('hidden');
-            } else {
-                if (isHost) {
-                    document.getElementById('quick-action-row').classList.remove('hidden');
-                    document.getElementById('btn-toggle-cylinder').classList.remove('hidden');
-                } else {
-                    document.getElementById('quick-action-row').classList.add('hidden');
-                    document.getElementById('btn-toggle-cylinder').classList.add('hidden');
-                }
-            }
-            
-            document.getElementById('btn-toggle-cylinder').disabled = !isHost || isMatchRunning;
-            
-            // Строгое разграничение: крутить может только активный игрок в его ход, либо дилер вне игры
+            // Строгое управление возможностью крутить барабан в UI
             let canSpinUI = false;
             if (isOnlineMode) {
                 if (isGameSessionActive) {
@@ -1466,11 +1498,13 @@
                 canSpinUI = true;
             }
             
+            // Во время активной игры дилер не может открыть барабан или изменять патроны
+            document.getElementById('btn-toggle-cylinder').disabled = !isHost || isGameSessionActive;
             document.getElementById('btn-spin').disabled = !canSpinUI;
             
-            document.getElementById('btn-load-1').disabled = !isHost || isMatchRunning;
-            document.getElementById('btn-load-3').disabled = !isHost || isMatchRunning;
-            document.getElementById('btn-extract').disabled = !isHost || isMatchRunning;
+            document.getElementById('btn-load-1').disabled = !canManageCylinder;
+            document.getElementById('btn-load-3').disabled = !canManageCylinder;
+            document.getElementById('btn-extract').disabled = !canManageCylinder;
         }
 
         // --- МЕХАНИКА РЕВОЛЬВЕРА ---
@@ -1478,10 +1512,7 @@
         function clickChamber(index) {
             if (isAnimating) return;
             if (isCylinderClosed) return;
-            if (isGameSessionActive) {
-                log("Нельзя снаряжать револьвер во время активного матча!", "warn");
-                return;
-            }
+            if (isGameSessionActive) return; // Запрет изменения патронов во время дуэли
             if (!amIHost()) return; 
 
             initAudio();
@@ -1501,10 +1532,7 @@
 
         function toggleCylinder() {
             if (isAnimating) return;
-            if (isGameSessionActive) {
-                log("Нельзя откидывать барабан во время дуэли!", "warn");
-                return;
-            }
+            if (isGameSessionActive) return; // Запрет на открытие барабана во время активной игры
             if (!amIHost()) return; 
             initAudio();
 
@@ -1857,8 +1885,13 @@
                     btn.textContent = "Сыграть снова (Реванш)";
                     btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
                     btn.onclick = () => {
+                        // Ротация дилера в локальной игре (Hot-Seat): сдвигаем очередь
+                        if (players.length > 1) {
+                            const firstPlayer = players.shift();
+                            players.push(firstPlayer);
+                        }
                         resetFullSessionLocal();
-                        startOfflineMode(); // Мгновенный перезапуск локальной дуэли
+                        startGameSession(); // Мгновенный запуск раунда в Hot-Seat
                     };
                 }
 
@@ -1939,24 +1972,10 @@
             // Проверяем, согласны ли все текущие игроки в лобби на реванш
             const allApproved = players.every(p => proposedReplayPlayers.some(rp => rp.id === p.id));
             if (allApproved && players.length >= 2) {
-                // Передаем роль дилера по очереди следующему игроку
-                let currentIdx = players.findIndex(p => p.id === currentDealerId);
-                if (currentIdx === -1) currentIdx = 0;
-                let nextIdx = (currentIdx + 1) % players.length;
-                let nextDealerId = players[nextIdx].id;
-                
-                const nextDealerName = players[nextIdx].name;
-                log(`Все участники согласились на реванш! Передаем роль дилера игроку: [${nextDealerName}]`, "success");
-                
-                // Рассылаем команду сброса раунда с новым ID дилера
-                sendNetworkPayload({
-                    type: 'RESET_ROUND',
-                    nextDealerId: nextDealerId
-                }, 1); // QoS 1 гарантирует доставку смены ролей
-                
-                // Переназначаем дилера у себя локально и перезагружаем сессию
-                currentDealerId = nextDealerId;
-                resetFullSessionLocal();
+                log("Все участники согласились на реванш! Запуск нового раунда...", "success");
+                setTimeout(() => {
+                    resetRoundNetwork();
+                }, 1000); 
             }
         }
 
@@ -1975,7 +1994,22 @@
 
         function resetRoundNetwork() {
             if (!amIHost()) return;
-            sendNetworkPayload({ type: 'RESET_ROUND', nextDealerId: currentDealerId }, 1); // Сброс без передачи дилера
+
+            // Смена дилера по кругу: отправляем текущего дилера (players[0]) в конец очереди
+            let rotatedPlayers = [...players];
+            if (rotatedPlayers.length > 1) {
+                const firstPlayer = rotatedPlayers.shift();
+                rotatedPlayers.push(firstPlayer);
+                log(`Дилером становится следующий по очереди игрок: [${rotatedPlayers[0].name}]`, 'system');
+            }
+
+            // Рассылаем игрокам команду сброса раунда вместе с новым списком игроков (сменившим дилера)
+            sendNetworkPayload({ 
+                type: 'RESET_ROUND',
+                players: rotatedPlayers
+            }, 1); // Гарантированный сброс сессии по QoS 1
+
+            players = rotatedPlayers;
             resetFullSessionLocal();
         }
 
@@ -1984,7 +2018,7 @@
             showScreen('menu');
         }
 
-        // Сброс и возврат к кастомизации игроков в локальной игре
+        // Сброс и возврат к кастомизации игроков прямо во время игры
         function resetToLobby() {
             if (isOnlineMode) {
                 exitToMainMenu();
@@ -2054,11 +2088,6 @@
             if (isOnlineMode) {
                 applySyncedVisualState();
                 document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
-                
-                // Если я унаследовал роль НОВОГО ДИЛЕРА, отправляю синхронизацию
-                if (amIHost()) {
-                    sendStateSyncPayload();
-                }
             } else {
                 document.getElementById('lobby-panel').classList.remove('hidden');
                 document.getElementById('cylinder-visual-box').classList.add('hidden');
@@ -2107,56 +2136,16 @@
             log('Вы вернулись в главное меню.', 'default');
         }
 
-        function clickChamber(index) {
-            if (isAnimating) return;
-            if (isCylinderClosed) return;
-            if (isGameSessionActive) {
-                log("Нельзя менять патроны в барабане во время активной игры!", "warn");
-                return;
-            }
-            if (!amIHost()) return; 
-
-            initAudio();
-            if (chambers[index] === 0) {
-                chambers[index] = 1;
-                playClickSound(1150, 0.04, 0.16);
-            } else {
-                chambers[index] = 0;
-                playClickSound(850, 0.03, 0.12);
-            }
-            renderChambers();
-
-            if (isOnlineMode) {
-                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers }, 0); // QoS 0 для скорости
-            }
-        }
-
-        function toggleCylinder() {
-            if (isAnimating) return;
-            if (isGameSessionActive) {
-                log("Нельзя открыть барабан, пока идет игра!", "warn");
-                return;
-            }
-            if (!amIHost()) return; 
-            initAudio();
-
-            isCylinderClosed = !isCylinderClosed;
-            applyCylinderCoverState();
-            updatePlayersUI();
-
-            if (isOnlineMode) {
-                sendNetworkPayload({ type: 'CYLINDER_TOGGLE', closed: isCylinderClosed }, 0);
-                sendStateSyncPayload();
-            }
+        function exitToMainMenuFromOverlay() {
+            document.getElementById('game-overlay').classList.remove('opacity-100');
+            document.getElementById('game-overlay').classList.add('opacity-0', 'pointer-events-none');
+            exitToMainMenu();
         }
 
         function quickLoad(count) {
             if (isAnimating) return;
             if (isCylinderClosed) return;
-            if (isGameSessionActive) {
-                log("Нельзя менять патроны во время активной игры!", "warn");
-                return;
-            }
+            if (isGameSessionActive) return; // Блокировка изменения патронов во время матча
             if (!amIHost()) return;
             initAudio();
 
@@ -2176,10 +2165,7 @@
         function ejectExtractor() {
             if (isAnimating) return;
             if (isCylinderClosed) return;
-            if (isGameSessionActive) {
-                log("Разряжать барабан во время игры запрещено!", "warn");
-                return;
-            }
+            if (isGameSessionActive) return; // Блокировка изменения патронов во время матча
             if (!amIHost()) return;
 
             playExtractorSound();
