@@ -480,7 +480,7 @@
             tg.enableClosingConfirmation();
         }
 
-        // Сетевые переменные (MQTT над WebSocket через HiveMQ)
+        // Сетевые переменные (MQTT над WebSocket через EMQX)
         let mqttClient = null;
         let isOnlineMode = false;
         let roomId = null;
@@ -902,7 +902,7 @@
             
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(shareUrl).then(() => {
-                    log(`Прямая ссылка для входа скопирована! Вы можете отправить её в WhatsApp, VK, Discord или другие мессенджеры.`, 'success');
+                    log(`Прямая ссылка для входа скопирована!`, 'success');
                     showTemporaryLinkFeedback();
                 }).catch(() => {
                     fallbackCopy(shareUrl);
@@ -945,7 +945,7 @@
             triggerHaptic('spin');
         }
 
-        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через HIVEMQ) ---
+        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через EMQX) ---
 
         function createOnlineRoom() {
             const generatedRoom = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -988,7 +988,7 @@
 
         function connectToNetworkBroker() {
             initAudio();
-            log(`Подключение к глобальному брокеру HiveMQ для комнаты #${roomId}...`, 'system');
+            log(`Подключение к скоростному брокеру EMQX для комнаты #${roomId}...`, 'system');
             
             const statusLabel = document.getElementById('network-status');
             statusLabel.textContent = 'Подключение...';
@@ -1004,13 +1004,13 @@
                 }
             }, 7000);
 
-            // Использование HiveMQ — устраняет сильный троттлинг и задержки QoS 1 на ПК
-            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+            // Оптимизированные параметры соединения для мобильных сетей и ПК
+            mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
                 clientId: myClientId,
                 keepalive: 60, // Устойчивость к фоновому режиму Telegram
                 clean: true,
                 connectTimeout: 5000,
-                reconnectPeriod: 1500,
+                reconnectPeriod: 1000,
                 queueQoSZero: false 
             });
 
@@ -1335,20 +1335,6 @@
 
         function updatePlayerName(index, val) {
             players[index].name = val.trim() || `Игрок ${index + 1}`;
-        }
-
-        function addPlayerField() {
-            if (players.length >= 6) return;
-            players.push({ id: 'local_' + (players.length + 1), name: `Игрок ${players.length + 1}`, isAlive: true });
-            renderLobbyInputs();
-            playClickSound(1000, 0.02, 0.1);
-        }
-
-        function removeLastPlayerField() {
-            if (players.length <= 2) return;
-            players.pop();
-            renderLobbyInputs();
-            playClickSound(800, 0.02, 0.1);
         }
 
         // --- МЕХАНИКА ИГРЫ И ВЗАИМОДЕЙСТВИЙ ---
@@ -2074,6 +2060,32 @@
             resetFullSessionLocal();
             showScreen('menu');
             log('Вы вернулись в главное меню.', 'default');
+        }
+
+        // --- ВСПРЫГИВАЮЩИЙ РЕЗЕРВНЫЙ КОПИРОВАЛЬЩИК ---
+        function fallbackCopy(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.top = "0";
+            textArea.style.left = "0";
+            textArea.style.width = "2em";
+            textArea.style.height = "2em";
+            textArea.style.padding = "0";
+            textArea.style.border = "none";
+            textArea.style.outline = "none";
+            textArea.style.boxShadow = "none";
+            textArea.style.background = "transparent";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                log(`Текст скопирован в буфер обмена!`, 'success');
+            } catch (err) {
+                log('Не удалось скопировать.', 'warn');
+            }
+            document.body.removeChild(textArea);
         }
 
         function exitToMainMenuFromOverlay() {
