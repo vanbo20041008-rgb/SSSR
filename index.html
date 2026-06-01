@@ -22,22 +22,6 @@
             will-change: transform, filter, opacity;
         }
 
-        /* Анимация плавного появления и масштабирования патронов в каморах */
-        .bullet-entry {
-            transform-box: fill-box;
-            transform-origin: center;
-            transition: opacity 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        .bullet-hidden {
-            opacity: 0 !important;
-            transform: scale(0.3) !important;
-            pointer-events: none;
-        }
-        .bullet-shown {
-            opacity: 1 !important;
-            transform: scale(1) !important;
-        }
-
         /* Анимация отдачи оружия */
         @keyframes recoil {
             0% { transform: rotate(0deg) translate(0, 0); }
@@ -378,7 +362,7 @@
                             <!-- Chamber 0 -->
                             <g id="chamber-0" onclick="clickChamber(0)" class="cursor-pointer group">
                                 <circle cx="110" cy="50" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-0" class="bullet-entry bullet-hidden">
+                                <g id="bullet-0" class="hidden">
                                     <circle cx="110" cy="50" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="110" cy="50" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-0" cx="110" cy="50" r="2" fill="#555" />
@@ -387,7 +371,7 @@
                             <!-- Chamber 1 -->
                             <g id="chamber-1" onclick="clickChamber(1)" class="cursor-pointer group">
                                 <circle cx="162" cy="80" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-1" class="bullet-entry bullet-hidden">
+                                <g id="bullet-1" class="hidden">
                                     <circle cx="162" cy="80" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="162" cy="80" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-1" cx="162" cy="80" r="2" fill="#555" />
@@ -396,7 +380,7 @@
                             <!-- Chamber 2 -->
                             <g id="chamber-2" onclick="clickChamber(2)" class="cursor-pointer group">
                                 <circle cx="162" cy="140" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-2" class="bullet-entry bullet-hidden">
+                                <g id="bullet-2" class="hidden">
                                     <circle cx="162" cy="140" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="162" cy="140" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-2" cx="162" cy="140" r="2" fill="#555" />
@@ -405,7 +389,7 @@
                             <!-- Chamber 3 -->
                             <g id="chamber-3" onclick="clickChamber(3)" class="cursor-pointer group">
                                 <circle cx="110" cy="170" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-3" class="bullet-entry bullet-hidden">
+                                <g id="bullet-3" class="hidden">
                                     <circle cx="110" cy="170" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="110" cy="170" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-3" cx="110" cy="170" r="2" fill="#555" />
@@ -414,7 +398,7 @@
                             <!-- Chamber 4 -->
                             <g id="chamber-4" onclick="clickChamber(4)" class="cursor-pointer group">
                                 <circle cx="58" cy="140" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-4" class="bullet-entry bullet-hidden">
+                                <g id="bullet-4" class="hidden">
                                     <circle cx="58" cy="140" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="58" cy="140" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-4" cx="58" cy="140" r="2" fill="#555" />
@@ -423,7 +407,7 @@
                             <!-- Chamber 5 -->
                             <g id="chamber-5" onclick="clickChamber(5)" class="cursor-pointer group">
                                 <circle cx="58" cy="80" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-5" class="bullet-entry bullet-hidden">
+                                <g id="bullet-5" class="hidden">
                                     <circle cx="58" cy="80" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="58" cy="80" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-5" cx="58" cy="80" r="2" fill="#555" />
@@ -451,7 +435,7 @@
                     
                     <!-- Кнопки инициации раундов -->
                     <button id="btn-start-game" onclick="startGameSession()" class="w-full bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold py-3 px-3 rounded uppercase tracking-wider transition-all">
-                        ПОДТВЕРДИТЬ ИГРОКОВ
+                        НАЧАТЬ ДУЭЛЬ
                     </button>
                     <div class="flex gap-2 w-full mt-2">
                         <button id="btn-exit-to-menu" onclick="exitToMainMenu()" class="flex-1 bg-gray-800 hover:bg-gray-750 border border-gray-700 text-gray-400 text-[10px] font-bold py-2 px-3 rounded uppercase transition-all">
@@ -787,19 +771,19 @@
             }
         }
 
-        // Надежное переключение экранов без возможности дублирования
+        // Абсолютное и надежное переключение экранов без возможности дублирования
         function showScreen(screen) {
             const menu = document.getElementById('screen-menu');
             const game = document.getElementById('screen-game');
             if (screen === 'menu') {
-                menu.style.display = 'block';
+                menu.style.setProperty('display', 'block', 'important');
                 menu.classList.remove('hidden');
-                game.style.display = 'none';
+                game.style.setProperty('display', 'none', 'important');
                 game.classList.add('hidden');
             } else if (screen === 'game') {
-                menu.style.display = 'none';
+                menu.style.setProperty('display', 'none', 'important');
                 menu.classList.add('hidden');
-                game.style.display = ''; // Сбрасываем дисплей на стандартный сеточный из tailwind
+                game.style.setProperty('display', 'grid', 'important'); 
                 game.classList.remove('hidden');
             }
         }
@@ -818,17 +802,16 @@
 
                     // Если барабан закрыт — полностью скрываем отображение патронов из рендеринга
                     if (isCylinderClosed) {
-                        bulletGroup.classList.add('bullet-hidden');
-                        bulletGroup.classList.remove('bullet-shown');
+                        bulletGroup.classList.add('hidden');
                     } else {
-                        // Анимированное появление / скрытие патронов
-                        if (chambers[i] === 1 || chambers[i] === 2) { 
-                            bulletGroup.classList.remove('bullet-hidden');
-                            bulletGroup.classList.add('bullet-shown');
-                            if (primer) primer.setAttribute('fill', chambers[i] === 1 ? '#999' : '#111'); 
+                        if (chambers[i] === 1) { 
+                            bulletGroup.classList.remove('hidden');
+                            if (primer) primer.setAttribute('fill', '#999'); 
+                        } else if (chambers[i] === 2) { 
+                            bulletGroup.classList.remove('hidden');
+                            if (primer) primer.setAttribute('fill', '#111'); 
                         } else { 
-                            bulletGroup.classList.add('bullet-hidden');
-                            bulletGroup.classList.remove('bullet-shown');
+                            bulletGroup.classList.add('hidden');
                         }
                     }
                 }
@@ -1040,7 +1023,7 @@
                     mqttClient.end(true);
                     exitToMainMenu();
                 }
-            }, 10000);
+            }, 10000); 
 
             // Оптимизированные параметры соединения для мобильных сетей и ПК
             mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
@@ -1059,7 +1042,7 @@
                 statusLabel.className = 'px-2 py-0.5 text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-900/40 rounded uppercase font-bold';
 
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
-                mqttClient.subscribe(roomTopic, { qos: 1 }, (err) => {
+                mqttClient.subscribe(roomTopic, { qos: 0 }, (err) => { // Все подписки на QoS 0 для скорости
                     if (!err) {
                         log(`Канал комнаты #${roomId} успешно прослушивается.`, 'success');
                         
@@ -1075,7 +1058,6 @@
                             if (guestJoinTimer) clearInterval(guestJoinTimer);
                             let joinAttempts = 0;
                             guestJoinTimer = setInterval(() => {
-                                // Гость проверяет: внесен ли его myPlayerId в список игроков?
                                 const amIInList = players.some(p => p.id === myPlayerId);
                                 if (amIInList) {
                                     clearInterval(guestJoinTimer);
@@ -1095,7 +1077,7 @@
                                     name: myName
                                 }, 0);
                                 joinAttempts++;
-                            }, 1500); // Повышенная частота для мгновенной стыковки на плохом интернете
+                            }, 1500); 
                         }
                     } else {
                         log(`Ошибка сетевой подписки: ${err.message}`, 'warn');
@@ -1136,7 +1118,6 @@
             });
         }
 
-        // QoS 0 по умолчанию для мгновенного пинга в игре; QoS 1 для транзакций настроек
         function sendNetworkPayload(data, qos = 0) {
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
@@ -1156,7 +1137,6 @@
                             log(`Игрок [${msg.name}] успешно вошел в лобби.`, 'success');
                         } else {
                             log(`Игрок [${msg.name}] переподключился...`, 'system');
-                            // Обновляем имя, если игрок сменил ник
                             const existingPlayer = players.find(p => p.id === msg.id);
                             if (existingPlayer) existingPlayer.name = msg.name;
                         }
@@ -1167,11 +1147,11 @@
                 case 'SYNC':
                     if (isAnimating) {
                         // Если в данный момент крутится барабан или происходит выстрел,
-                        // полностью игнорируем фоновую синхронизацию, чтобы избежать подергиваний.
+                        // полностью игнорируем фоновую синхронизацию, чтобы избежать прерываний визуальной части.
                         break;
                     }
 
-                    // Гость считает синхронизацию выполненной только в том случае, если хост внес его в лобби
+                    // Гость считает синхронизацию выполненной только в том случае, если хост внес его в игровое лобби
                     const amIInList = msg.players.some(p => p.id === myPlayerId);
                     
                     if (amIInList) {
@@ -1202,9 +1182,6 @@
                     isCylinderClosed = msg.isCylinderClosed;
                     currentPlayerIndex = msg.currentPlayerIndex;
                     isGameSessionActive = msg.isGameSessionActive;
-                    if (msg.proposedReplayPlayers) {
-                        proposedReplayPlayers = msg.proposedReplayPlayers; // Авторитетная синхронизация голосов реванша
-                    }
 
                     // Принудительно скрываем оверлей смерти у гостя, если дуэль продолжается
                     const aliveCount = players.filter(p => p.isAlive).length;
@@ -1282,7 +1259,6 @@
                     showShotOutcomeOverlay(null, true);
                     
                     if (amIHost()) {
-                        sendStateSyncPayload(); // Хост подтверждает прием голоса и перераспределяет список по сети
                         checkAndTriggerAutoReplay();
                     }
                     break;
@@ -1303,8 +1279,7 @@
                 activeIndex: activeIndex,
                 isCylinderClosed: isCylinderClosed,
                 currentPlayerIndex: currentPlayerIndex,
-                isGameSessionActive: isGameSessionActive,
-                proposedReplayPlayers: proposedReplayPlayers // Рассылаем голоса для исключения сетевого "подвисания"
+                isGameSessionActive: isGameSessionActive
             }, 0); 
             updatePlayersUI();
         }
@@ -1375,11 +1350,12 @@
             document.getElementById('session-label').innerHTML = 'Локальная дуэль (Hot-Seat)';
             
             document.getElementById('lobby-panel').classList.remove('hidden');
-            document.getElementById('cylinder-visual-box').classList.remove('hidden'); // Барабан виден сразу!
             document.getElementById('btn-start-game').classList.remove('hidden');
-            document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
+            document.getElementById('btn-start-game').textContent = "НАЧАТЬ ДУЭЛЬ"; 
             document.getElementById('btn-reset-lobby').classList.add('hidden');
             
+            // Включаем отображение барабана с самого начала, чтобы видеть патроны и анимации до старта
+            document.getElementById('cylinder-visual-box').classList.remove('hidden');
             document.getElementById('wait-message-box').classList.add('hidden');
 
             document.getElementById('btn-load-1').classList.remove('hidden');
@@ -1392,6 +1368,8 @@
                 { id: 'local_2', name: "Игрок 2", isAlive: true }
             ];
             renderLobbyInputs();
+            renderChambers();
+            applyCylinderCoverState();
             updatePlayersUI();
         }
 
@@ -1443,7 +1421,6 @@
                 currentPlayerIndex = Math.floor(Math.random() * players.length);
                 
                 document.getElementById('lobby-panel').classList.add('hidden');
-                document.getElementById('cylinder-visual-box').classList.remove('hidden');
                 document.getElementById('btn-start-game').classList.add('hidden');
                 document.getElementById('btn-load-1').classList.add('hidden');
                 document.getElementById('btn-load-3').classList.add('hidden');
@@ -1557,7 +1534,7 @@
             renderChambers();
 
             if (isOnlineMode) {
-                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers }, 0); // QoS 0 для скорости
+                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers }, 0); 
             }
         }
 
@@ -1682,7 +1659,7 @@
                     
                     if (fireRequestTimeout) clearTimeout(fireRequestTimeout);
                     
-                    // Клиентская защита от потери сетевого пакета: восстанавливает кнопку через 2.5 сек, если произошел сбой на сервере
+                    // Клиентская защита от потери сетевого пакета
                     fireRequestTimeout = setTimeout(() => {
                         if (isGameSessionActive && !isAnimating) {
                             const currentShooter = players[currentPlayerIndex];
@@ -1693,7 +1670,7 @@
                         }
                     }, 2500);
 
-                    sendNetworkPayload({ type: 'REQUEST_FIRE' }, 0); // QoS 0 для максимальной скорости клика
+                    sendNetworkPayload({ type: 'REQUEST_FIRE' }, 0); 
                 }
             } else {
                 processOfflineShot();
@@ -1717,8 +1694,11 @@
                 if (deadIdx !== -1) {
                     updatedPlayers[deadIdx].isAlive = false;
                 }
-            } else {
-                // Осечка, высчитываем очередь на следующий ход
+            }
+
+            // Надежный и точный расчет очереди ходов среди выживших (устраняет рассинхронизацию)
+            const alivePlayers = updatedPlayers.filter(p => p.isAlive);
+            if (alivePlayers.length > 1) {
                 let searchCount = 0;
                 do {
                     nextPlayerIndex = (nextPlayerIndex + 1) % updatedPlayers.length;
@@ -1744,8 +1724,6 @@
 
         function processOfflineShot() {
             const shooter = players[currentPlayerIndex];
-            
-            // Барабан поворачивается на следующую камору
             const targetChamberIndex = (activeIndex + 1) % 6;
             const isLethal = (chambers[targetChamberIndex] === 1);
             
@@ -1759,7 +1737,11 @@
                 if (deadIdx !== -1) {
                     updatedPlayers[deadIdx].isAlive = false;
                 }
-            } else {
+            }
+
+            // Переключение хода среди оставшихся живых игроков в Hot-Seat
+            const alivePlayers = updatedPlayers.filter(p => p.isAlive);
+            if (alivePlayers.length > 1) {
                 let searchCount = 0;
                 do {
                     nextPlayerIndex = (nextPlayerIndex + 1) % updatedPlayers.length;
@@ -1900,17 +1882,26 @@
                 `;
 
                 if (isOnlineMode) {
-                    const hasIApproved = proposedReplayPlayers.some(p => p.id === myPlayerId);
-                    if (hasIApproved) {
-                        btn.textContent = "Реванш принят";
-                        btn.disabled = true;
-                        btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
-                    } else {
-                        btn.textContent = "Предложить сыграть заново";
+                    if (isHost) {
+                        // У дилера всегда активна кнопка запуска, что решает проблему зависания при вылете гостей
+                        btn.textContent = "Начать реванш (Дилер)";
                         btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
                         btn.onclick = () => {
-                            proposeReplayFromMe();
+                            resetRoundNetwork();
                         };
+                    } else {
+                        const hasIApproved = proposedReplayPlayers.some(p => p.id === myPlayerId);
+                        if (hasIApproved) {
+                            btn.textContent = "Реванш принят (Ожидание)";
+                            btn.disabled = true;
+                            btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+                        } else {
+                            btn.textContent = "Проголосовать за реванш";
+                            btn.className = "w-full px-8 py-4 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold rounded-md shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-500 cursor-pointer";
+                            btn.onclick = () => {
+                                proposeReplayFromMe();
+                            };
+                        }
                     }
                 } else {
                     btn.textContent = "Сыграть снова (Реванш)";
@@ -1921,8 +1912,13 @@
                             const firstPlayer = players.shift();
                             players.push(firstPlayer);
                         }
+                        
+                        // Возвращаем оффлайн-игру на стадию лобби с открытым барабаном для изменения патронов
                         resetFullSessionLocal();
-                        startGameSession(); // Мгновенный запуск раунда в Hot-Seat
+                        
+                        document.getElementById('game-overlay').classList.remove('opacity-100');
+                        document.getElementById('game-overlay').classList.add('opacity-0', 'pointer-events-none');
+                        log('Очередь игроков сдвинута. Барабан открыт, вы можете заново снарядить револьвер!', 'system');
                     };
                 }
 
@@ -2034,7 +2030,7 @@
                 log(`Дилером становится следующий по очереди игрок: [${rotatedPlayers[0].name}]`, 'system');
             }
 
-            // Рассылаем игрокам команду сброса раунда вместе с новым списком игроков (сменившим дилера)
+            // Рассылаем игрокам команду сброса раунда вместе с новым списком игроков
             sendNetworkPayload({ 
                 type: 'RESET_ROUND',
                 players: rotatedPlayers
@@ -2066,9 +2062,9 @@
             lastDeadPlayer = null;
 
             document.getElementById('lobby-panel').classList.remove('hidden');
-            document.getElementById('cylinder-visual-box').classList.remove('hidden'); // Барабан виден сразу!
+            document.getElementById('cylinder-visual-box').classList.remove('hidden');
             document.getElementById('btn-start-game').classList.remove('hidden');
-            document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
+            document.getElementById('btn-start-game').textContent = "НАЧАТЬ ДУЭЛЬ";
             document.getElementById('btn-reset-lobby').classList.add('hidden');
 
             document.getElementById('btn-load-1').classList.remove('hidden');
@@ -2085,6 +2081,7 @@
 
             renderLobbyInputs();
             renderChambers();
+            applyCylinderCoverState();
             updatePlayersUI();
             updateRisk();
 
@@ -2119,15 +2116,11 @@
             if (isOnlineMode) {
                 applySyncedVisualState();
                 document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
-                
-                // Новый Хост после реванша сразу отправляет authoritative SYNC
-                if (amIHost()) {
-                    sendStateSyncPayload();
-                }
             } else {
                 document.getElementById('lobby-panel').classList.remove('hidden');
-                document.getElementById('cylinder-visual-box').classList.remove('hidden'); // Барабан виден сразу!
+                document.getElementById('cylinder-visual-box').classList.remove('hidden'); // Не скрываем барабан в локальной игре на стадии настройки
                 document.getElementById('btn-start-game').classList.remove('hidden');
+                document.getElementById('btn-start-game').textContent = "НАЧАТЬ ДУЭЛЬ";
                 document.getElementById('btn-toggle-cylinder').textContent = 'ОТКРЫТЬ БАРАБАН';
                 
                 document.getElementById('btn-load-1').classList.remove('hidden');
@@ -2150,6 +2143,7 @@
             document.getElementById('active-chamber-num').textContent = '#1';
 
             isAnimating = false;
+            applyCylinderCoverState();
             updateRisk();
         }
 
@@ -2194,7 +2188,7 @@
             renderChambers();
 
             if (isOnlineMode) {
-                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers }, 0); // QoS 0 для скорости
+                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers }, 0); 
             }
         }
 
@@ -2209,7 +2203,7 @@
             renderChambers();
 
             if (isOnlineMode) {
-                sendNetworkPayload({ type: 'EXTRACT' }, 0); // QoS 0 для скорости
+                sendNetworkPayload({ type: 'EXTRACT' }, 0); 
             }
         }
 
