@@ -22,6 +22,22 @@
             will-change: transform, filter, opacity;
         }
 
+        /* Анимация плавного появления и масштабирования патронов в каморах */
+        .bullet-entry {
+            transform-box: fill-box;
+            transform-origin: center;
+            transition: opacity 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .bullet-hidden {
+            opacity: 0 !important;
+            transform: scale(0.3) !important;
+            pointer-events: none;
+        }
+        .bullet-shown {
+            opacity: 1 !important;
+            transform: scale(1) !important;
+        }
+
         /* Анимация отдачи оружия */
         @keyframes recoil {
             0% { transform: rotate(0deg) translate(0, 0); }
@@ -362,7 +378,7 @@
                             <!-- Chamber 0 -->
                             <g id="chamber-0" onclick="clickChamber(0)" class="cursor-pointer group">
                                 <circle cx="110" cy="50" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-0" class="hidden">
+                                <g id="bullet-0" class="bullet-entry bullet-hidden">
                                     <circle cx="110" cy="50" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="110" cy="50" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-0" cx="110" cy="50" r="2" fill="#555" />
@@ -371,7 +387,7 @@
                             <!-- Chamber 1 -->
                             <g id="chamber-1" onclick="clickChamber(1)" class="cursor-pointer group">
                                 <circle cx="162" cy="80" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-1" class="hidden">
+                                <g id="bullet-1" class="bullet-entry bullet-hidden">
                                     <circle cx="162" cy="80" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="162" cy="80" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-1" cx="162" cy="80" r="2" fill="#555" />
@@ -380,7 +396,7 @@
                             <!-- Chamber 2 -->
                             <g id="chamber-2" onclick="clickChamber(2)" class="cursor-pointer group">
                                 <circle cx="162" cy="140" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-2" class="hidden">
+                                <g id="bullet-2" class="bullet-entry bullet-hidden">
                                     <circle cx="162" cy="140" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="162" cy="140" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-2" cx="162" cy="140" r="2" fill="#555" />
@@ -389,7 +405,7 @@
                             <!-- Chamber 3 -->
                             <g id="chamber-3" onclick="clickChamber(3)" class="cursor-pointer group">
                                 <circle cx="110" cy="170" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-3" class="hidden">
+                                <g id="bullet-3" class="bullet-entry bullet-hidden">
                                     <circle cx="110" cy="170" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="110" cy="170" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-3" cx="110" cy="170" r="2" fill="#555" />
@@ -398,7 +414,7 @@
                             <!-- Chamber 4 -->
                             <g id="chamber-4" onclick="clickChamber(4)" class="cursor-pointer group">
                                 <circle cx="58" cy="140" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-4" class="hidden">
+                                <g id="bullet-4" class="bullet-entry bullet-hidden">
                                     <circle cx="58" cy="140" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="58" cy="140" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-4" cx="58" cy="140" r="2" fill="#555" />
@@ -407,7 +423,7 @@
                             <!-- Chamber 5 -->
                             <g id="chamber-5" onclick="clickChamber(5)" class="cursor-pointer group">
                                 <circle cx="58" cy="80" r="22" fill="url(#chamber-depth)" stroke="#0c0d10" stroke-width="1.5" class="group-hover:stroke-gray-500 transition-colors"/>
-                                <g id="bullet-5" class="hidden">
+                                <g id="bullet-5" class="bullet-entry bullet-hidden">
                                     <circle cx="58" cy="80" r="18" fill="url(#brass-grad)" stroke="#111" stroke-width="0.5" />
                                     <circle cx="58" cy="80" r="8" fill="url(#copper-grad)" stroke="#333" stroke-width="0.5" />
                                     <circle id="primer-5" cx="58" cy="80" r="2" fill="#555" />
@@ -802,16 +818,17 @@
 
                     // Если барабан закрыт — полностью скрываем отображение патронов из рендеринга
                     if (isCylinderClosed) {
-                        bulletGroup.classList.add('hidden');
+                        bulletGroup.classList.add('bullet-hidden');
+                        bulletGroup.classList.remove('bullet-shown');
                     } else {
-                        if (chambers[i] === 1) { 
-                            bulletGroup.classList.remove('hidden');
-                            if (primer) primer.setAttribute('fill', '#999'); 
-                        } else if (chambers[i] === 2) { 
-                            bulletGroup.classList.remove('hidden');
-                            if (primer) primer.setAttribute('fill', '#111'); 
+                        // Анимированное появление / скрытие патронов
+                        if (chambers[i] === 1 || chambers[i] === 2) { 
+                            bulletGroup.classList.remove('bullet-hidden');
+                            bulletGroup.classList.add('bullet-shown');
+                            if (primer) primer.setAttribute('fill', chambers[i] === 1 ? '#999' : '#111'); 
                         } else { 
-                            bulletGroup.classList.add('hidden');
+                            bulletGroup.classList.add('bullet-hidden');
+                            bulletGroup.classList.remove('bullet-shown');
                         }
                     }
                 }
@@ -962,7 +979,7 @@
             triggerHaptic('spin');
         }
 
-        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через EMQX) ---
+        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА ---
 
         function createOnlineRoom() {
             const generatedRoom = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -1023,7 +1040,7 @@
                     mqttClient.end(true);
                     exitToMainMenu();
                 }
-            }, 10000); // 10 секунд - оптимальный таймаут для мобильного соединения
+            }, 10000);
 
             // Оптимизированные параметры соединения для мобильных сетей и ПК
             mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
@@ -1094,7 +1111,6 @@
 
             mqttClient.on('message', (topic, payload) => {
                 try {
-                    // Универсальный разбор бинарных пакетов от брокера
                     let messageText;
                     if (typeof payload === 'string') {
                         messageText = payload;
@@ -1151,11 +1167,11 @@
                 case 'SYNC':
                     if (isAnimating) {
                         // Если в данный момент крутится барабан или происходит выстрел,
-                        // полностью игнорируем фоновую синхронизацию, чтобы не перезаписать переменные до конца анимации.
+                        // полностью игнорируем фоновую синхронизацию, чтобы избежать подергиваний.
                         break;
                     }
 
-                    // Гость считает синхронизацию выполненной только в том случае, если хост внес его в игровое лобби
+                    // Гость считает синхронизацию выполненной только в том случае, если хост внес его в лобби
                     const amIInList = msg.players.some(p => p.id === myPlayerId);
                     
                     if (amIInList) {
@@ -1165,7 +1181,6 @@
                             log("Синхронизация с Хостом успешно завершена!", "success");
                         }
                     } else {
-                        // Если статус лобби получен, но мы отсутствуем в списке участников
                         if (!amIHost()) {
                             log("Получен статус комнаты, но нас еще нет в списке участников. Запрос регистрации...", "warn");
                             sendNetworkPayload({
@@ -1187,6 +1202,9 @@
                     isCylinderClosed = msg.isCylinderClosed;
                     currentPlayerIndex = msg.currentPlayerIndex;
                     isGameSessionActive = msg.isGameSessionActive;
+                    if (msg.proposedReplayPlayers) {
+                        proposedReplayPlayers = msg.proposedReplayPlayers; // Авторитетная синхронизация голосов реванша
+                    }
 
                     // Принудительно скрываем оверлей смерти у гостя, если дуэль продолжается
                     const aliveCount = players.filter(p => p.isAlive).length;
@@ -1235,7 +1253,6 @@
                         if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
                             processShotAndBroadcast();
                         } else {
-                            // Принудительно возвращаем SYNC гостю, если он нажал выстрел при рассинхроне или микрозадержке анимации
                             sendStateSyncPayload();
                         }
                     }
@@ -1265,6 +1282,7 @@
                     showShotOutcomeOverlay(null, true);
                     
                     if (amIHost()) {
+                        sendStateSyncPayload(); // Хост подтверждает прием голоса и перераспределяет список по сети
                         checkAndTriggerAutoReplay();
                     }
                     break;
@@ -1278,7 +1296,6 @@
 
         function sendStateSyncPayload() {
             if (!amIHost()) return;
-            // Перевод SYNC на QoS 0 для избавления от лагов повторных пакетов брокера
             sendNetworkPayload({
                 type: 'SYNC',
                 players: players,
@@ -1286,7 +1303,8 @@
                 activeIndex: activeIndex,
                 isCylinderClosed: isCylinderClosed,
                 currentPlayerIndex: currentPlayerIndex,
-                isGameSessionActive: isGameSessionActive
+                isGameSessionActive: isGameSessionActive,
+                proposedReplayPlayers: proposedReplayPlayers // Рассылаем голоса для исключения сетевого "подвисания"
             }, 0); 
             updatePlayersUI();
         }
@@ -1357,11 +1375,11 @@
             document.getElementById('session-label').innerHTML = 'Локальная дуэль (Hot-Seat)';
             
             document.getElementById('lobby-panel').classList.remove('hidden');
+            document.getElementById('cylinder-visual-box').classList.remove('hidden'); // Барабан виден сразу!
             document.getElementById('btn-start-game').classList.remove('hidden');
             document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
             document.getElementById('btn-reset-lobby').classList.add('hidden');
             
-            document.getElementById('cylinder-visual-box').classList.add('hidden');
             document.getElementById('wait-message-box').classList.add('hidden');
 
             document.getElementById('btn-load-1').classList.remove('hidden');
@@ -2048,7 +2066,7 @@
             lastDeadPlayer = null;
 
             document.getElementById('lobby-panel').classList.remove('hidden');
-            document.getElementById('cylinder-visual-box').classList.add('hidden');
+            document.getElementById('cylinder-visual-box').classList.remove('hidden'); // Барабан виден сразу!
             document.getElementById('btn-start-game').classList.remove('hidden');
             document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
             document.getElementById('btn-reset-lobby').classList.add('hidden');
@@ -2101,9 +2119,14 @@
             if (isOnlineMode) {
                 applySyncedVisualState();
                 document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
+                
+                // Новый Хост после реванша сразу отправляет authoritative SYNC
+                if (amIHost()) {
+                    sendStateSyncPayload();
+                }
             } else {
                 document.getElementById('lobby-panel').classList.remove('hidden');
-                document.getElementById('cylinder-visual-box').classList.add('hidden');
+                document.getElementById('cylinder-visual-box').classList.remove('hidden'); // Барабан виден сразу!
                 document.getElementById('btn-start-game').classList.remove('hidden');
                 document.getElementById('btn-toggle-cylinder').textContent = 'ОТКРЫТЬ БАРАБАН';
                 
