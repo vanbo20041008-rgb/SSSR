@@ -480,11 +480,18 @@
             tg.enableClosingConfirmation();
         }
 
-        // Сетевые переменные (MQTT над WebSocket через надежный и стабильный EMQX)
+        // Сетевые переменные (MQTT над WebSocket через HiveMQ)
         let mqttClient = null;
         let isOnlineMode = false;
         let roomId = null;
-        let myClientId = 'pl_' + Math.random().toString(36).substring(2, 9);
+        
+        // Решение конфликта дублирующихся Client ID через sessionStorage
+        let myClientId = sessionStorage.getItem('revolver_client_id');
+        if (!myClientId) {
+            myClientId = 'pl_' + Math.random().toString(36).substring(2, 9);
+            sessionStorage.setItem('revolver_client_id', myClientId);
+        }
+        
         let myName = "Игрок";
         let connectTimeout = null;
         let guestJoinTimer = null; // Глобальный цикличный таймер на сопряжение для Гостя
@@ -505,14 +512,6 @@
 
         let audioCtx = null;
         let masterGain = null;
-
-        // --- ВАЛИДАТОР КОДОВ КОМНАТ (Полностью защищает от багов и ложных комнат) ---
-        function isValidRoomId(str) {
-            if (!str) return false;
-            // Код комнаты должен начинаться с R, содержать только буквы и цифры, длина от 3 до 8 символов
-            const roomRegex = /^R[A-Z0-9]{2,7}$/;
-            return roomRegex.test(str.trim().toUpperCase());
-        }
 
         // --- ВСТРОЕННЫЙ СИНТЕЗАТОР ЗВУКОВ (Web Audio API) ---
 
@@ -731,7 +730,6 @@
             let hashParam = null;
             if (window.location.hash) {
                 const hashVal = window.location.hash.substring(1);
-                // Если хэш содержит tgWebAppData, это не код комнаты
                 if (hashVal && !hashVal.startsWith('tgWebAppData') && !hashVal.includes('tgWebAppData')) {
                     hashParam = hashVal;
                 }
@@ -741,17 +739,11 @@
             }
             
             let autoRoom = startParam || hashParam;
-            if (autoRoom) {
+            if (autoRoom && autoRoom.length >= 2) {
                 autoRoom = autoRoom.trim().toUpperCase();
-                if (isValidRoomId(autoRoom)) {
-                    document.getElementById('room-input-code').value = autoRoom;
-                    log(`Инициирован автопереход в комнату #${autoRoom}...`, 'system');
-                    joinOnlineRoom(false);
-                } else {
-                    log(`Параметр запуска не является кодом комнаты: ${autoRoom}.`, 'warn');
-                    history.replaceState(null, null, ' ');
-                    showScreen('menu');
-                }
+                document.getElementById('room-input-code').value = autoRoom;
+                log(`Инициирован автопереход в комнату #${autoRoom}...`, 'system');
+                joinOnlineRoom(false);
             } else {
                 history.replaceState(null, null, ' ');
                 showScreen('menu');
@@ -869,7 +861,91 @@
             document.body.removeChild(textArea);
         }
 
-        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через EMQX с SSL) ---
+        // --- ГЕНЕРАЦИЯ ПРИГЛАШЕНИЯ И ОТПРАВКА В ЧАТЫ ---
+
+        function inviteFriend() {
+            if (!roomId) return;
+            initAudio();
+            playClickSound(1100, 0.05, 0.15);
+
+            // Создаем красивую прямую ссылку в Telegram Mini App
+            const shareUrl = `https://t.me/${TG_BOT_USERNAME}/${TG_APP_SHORTNAME}?startapp=${roomId}`;
+            const inviteText = `🔫 ВЫЗЫВАЮ ТЕБЯ НА ДУЭЛЬ! 🔫\n\nЯ зарядил револьвер .357 и жду в комнате #${roomId}.\nКто выживет, а кто словит пулю? Заходи, если не струсил! 👇`;
+            
+            // Ссылка, которая вызывает нативный выбор чатов в Telegram
+            const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(inviteText)}`;
+
+            if (tg) {
+                try {
+                    tg.openLink(telegramShareUrl);
+                } catch (e) {
+                    try {
+                        tg.openTelegramLink(telegramShareUrl);
+                    } catch (err) {
+                        window.open(telegramShareUrl, '_blank');
+                    }
+                }
+            } else {
+                window.open(telegramShareUrl, '_blank');
+            }
+            log(`Ссылка-вызов для комнаты #${roomId} создана.`, 'success');
+        }
+
+        // --- КОПИРОВАНИЕ ПРЯМОЙ ССЫЛКИ ДЛЯ ДРУГИХ МЕССЕНДЖЕРОВ ---
+
+        function copyInviteLink() {
+            if (!roomId) return;
+            initAudio();
+            playClickSound(1100, 0.05, 0.15);
+
+            const shareUrl = `https://t.me/${TG_BOT_USERNAME}/${TG_APP_SHORTNAME}?startapp=${roomId}`;
+            
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    log(`Прямая ссылка для входа скопирована! Вы можете отправить её в WhatsApp, VK, Discord или другие мессенджеры.`, 'success');
+                    showTemporaryLinkFeedback();
+                }).catch(() => {
+                    fallbackCopy(shareUrl);
+                });
+            } else {
+                fallbackCopy(shareUrl);
+            }
+        }
+
+        function showTemporaryLinkFeedback() {
+            const btn = document.getElementById('btn-copy-link');
+            if (btn) {
+                const originalText = btn.innerHTML;
+                btn.innerHTML = `
+                    <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Скопировано!
+                `;
+                btn.className = "bg-emerald-950 text-emerald-400 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-emerald-900/40";
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.className = "bg-gray-800 hover:bg-gray-750 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750";
+                }, 2000);
+            }
+            triggerHaptic('spin');
+        }
+
+        function showTemporaryCopyFeedback() {
+            const span = document.getElementById('copy-indicator');
+            if (span) {
+                const originalText = span.textContent;
+                span.textContent = '(скопировано!)';
+                span.className = 'text-emerald-400 font-bold text-[9px] lowercase transition-colors duration-200';
+                setTimeout(() => {
+                    span.textContent = originalText;
+                    span.className = 'text-gray-500 font-normal lowercase transition-colors duration-200';
+                }, 2000);
+            }
+            triggerHaptic('spin');
+        }
+
+        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через HIVEMQ) ---
 
         function createOnlineRoom() {
             const generatedRoom = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -883,11 +959,6 @@
             
             if (!roomCode) {
                 alert("Пожалуйста, введите код комнаты!");
-                return;
-            }
-
-            if (!isValidRoomId(roomCode)) {
-                alert("Невалидный код комнаты! Код должен начинаться с буквы R и быть длиной 3-8 символов.");
                 return;
             }
 
@@ -917,7 +988,7 @@
 
         function connectToNetworkBroker() {
             initAudio();
-            log(`Подключение к коммерческому веб-сокет узлу EMQX для комнаты #${roomId}...`, 'system');
+            log(`Подключение к глобальному брокеру HiveMQ для комнаты #${roomId}...`, 'system');
             
             const statusLabel = document.getElementById('network-status');
             statusLabel.textContent = 'Подключение...';
@@ -933,11 +1004,10 @@
                 }
             }, 7000);
 
-            // EMQX на порту 8084 использует полноценные доверенные SSL-сертификаты.
-            // Любые браузеры на ПК (Chrome, Firefox, Safari) подключаются к нему без блокировок.
-            mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+            // Использование HiveMQ — устраняет сильный троттлинг и задержки QoS 1 на ПК
+            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
                 clientId: myClientId,
-                keepalive: 60, // Устойчивость к спящему режиму в Telegram
+                keepalive: 60, // Устойчивость к фоновому режиму Telegram
                 clean: true,
                 connectTimeout: 5000,
                 reconnectPeriod: 1500,
@@ -955,7 +1025,7 @@
                     if (!err) {
                         log(`Канал комнаты #${roomId} успешно прослушивается.`, 'success');
                         
-                        // Перезапрос синхронизации при входе и авто-реконнектах
+                        // Автоматический запрос полной синхронизации при первом входе и реконнектах
                         if (!amIHost()) {
                             log("Отправка запроса синхронизации Хосту...", "system");
                             sendNetworkPayload({
@@ -1018,7 +1088,7 @@
             });
         }
 
-        // По умолчанию используется QoS 0 (мгновенная доставка). Троттлинг EMQX полностью обойден.
+        // QoS 0 по умолчанию для мгновенного пинга в игре; QoS 1 для транзакций
         function sendNetworkPayload(data, qos = 0) {
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
@@ -1061,7 +1131,7 @@
                     currentPlayerIndex = msg.currentPlayerIndex;
                     isGameSessionActive = msg.isGameSessionActive;
 
-                    // Скрываем оверлей смерти у гостя, если дуэль продолжается
+                    // Принудительно скрываем оверлей смерти у гостя, если дуэль продолжается
                     const aliveCount = players.filter(p => p.isAlive).length;
                     if (isGameSessionActive && aliveCount > 1) {
                         const overlay = document.getElementById('game-overlay');
@@ -1110,7 +1180,7 @@
                         if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
                             processShotAndBroadcast();
                         } else {
-                            // Если запрос выстрела отклонен из-за микротаймингов — принудительно возвращаем SYNC гостю
+                            // Принудительно возвращаем SYNC гостю, если он нажал выстрел при рассинхроне или микрозадержке анимации
                             sendStateSyncPayload();
                         }
                     }
@@ -1546,7 +1616,7 @@
                     
                     if (fireRequestTimeout) clearTimeout(fireRequestTimeout);
                     
-                    // Клиентская защита от потери сетевого пакета
+                    // Клиентская защита от потери сетевого пакета: восстанавливает кнопку через 2.5 сек, если произошел сбой на сервере
                     fireRequestTimeout = setTimeout(() => {
                         if (isGameSessionActive && !isAnimating) {
                             const currentShooter = players[currentPlayerIndex];
