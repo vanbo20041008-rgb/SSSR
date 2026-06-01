@@ -843,43 +843,7 @@
             document.body.removeChild(textArea);
         }
 
-        function showTemporaryCopyFeedback() {
-            const span = document.getElementById('copy-indicator');
-            if (span) {
-                const originalText = span.textContent;
-                span.textContent = '(скопировано!)';
-                span.className = 'text-emerald-400 font-bold text-[9px] lowercase transition-colors duration-200';
-                setTimeout(() => {
-                    span.textContent = originalText;
-                    span.className = 'text-gray-500 font-normal lowercase transition-colors duration-200';
-                }, 2000);
-            }
-            triggerHaptic('spin');
-        }
-
-        // --- ГЕНЕРАЦИЯ ПРИГЛАШЕНИЯ И ОТПРАВКА В ЧАТЫ ---
-
-        function inviteFriend() {
-            if (!roomId) return;
-            initAudio();
-            playClickSound(1100, 0.05, 0.15);
-
-            // Создаем красивую прямую ссылку в Telegram Mini App
-            const shareUrl = `https://t.me/${TG_BOT_USERNAME}/${TG_APP_SHORTNAME}?startapp=${roomId}`;
-            const inviteText = `🔫 ВЫЗЫВАЮ ТЕБЯ НА ДУЭЛЬ! 🔫\n\nЯ зарядил револьвер .357 и жду в комнате #${roomId}.\nКто выживет, а кто словит пулю? Заходи, если не струсил! 👇`;
-            
-            // Ссылка, которая вызывает нативный выбор чатов в Telegram
-            const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(inviteText)}`;
-
-            if (tg) {
-                tg.openTelegramLink(telegramShareUrl);
-            } else {
-                window.open(telegramShareUrl, '_blank');
-            }
-            log(`Ссылка-вызов для комнаты #${roomId} создана.`, 'success');
-        }
-
-        // --- КОПИРОВАНИЕ ПРЯМОЙ ССЫЛКИ ДЛЯ ДРУГИХ МЕССЕНДЖЕРОВ ---
+        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через EMQX) ---
 
         function copyInviteLink() {
             if (!roomId) return;
@@ -919,8 +883,6 @@
             triggerHaptic('spin');
         }
 
-        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через EMQX) ---
-
         function createOnlineRoom() {
             const generatedRoom = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
             document.getElementById('room-input-code').value = generatedRoom;
@@ -943,7 +905,6 @@
             showScreen('game');
             document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
             
-            // Делаем видимой кнопку нативного приглашения и кнопку копирования ссылки
             document.getElementById('btn-invite').classList.remove('hidden');
             document.getElementById('btn-copy-link').classList.remove('hidden');
 
@@ -951,7 +912,6 @@
             document.getElementById('cylinder-visual-box').classList.remove('hidden');
             document.getElementById('btn-start-game').textContent = "НАЧАТЬ СЕТЕВУЮ ДУЭЛЬ";
 
-            // Если вы создатель, инициализируем лобби собой, чтобы сразу стать Хостом (Дилером) и не видеть плашку гостя
             if (isCreator) {
                 players = [{ id: myClientId, name: myName, isAlive: true }];
             } else {
@@ -980,13 +940,14 @@
                 }
             }, 7000);
 
-            // Подключение по WSS протоколу к стабильному брокеру EMQX Cloud
+            // Подключение к высокопроизводительному MQTT брокеру EMQX Cloud
             mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
                 clientId: myClientId,
-                keepalive: 60, // Предотвращает засыпание соединения в веб-вкладках
+                keepalive: 30, 
                 clean: true,
                 connectTimeout: 5000,
-                reconnectPeriod: 1500
+                reconnectPeriod: 1000,
+                queueQoSZero: false // Отключаем накопление QoS 0 пакетов при разрыве соединения
             });
 
             mqttClient.on('connect', () => {
@@ -1000,7 +961,6 @@
                     if (!err) {
                         log(`Канал комнаты #${roomId} успешно прослушивается.`, 'success');
                         
-                        // Механизм цикличного сопряжения Гостя с Хостом
                         if (!amIHost()) {
                             players = [];
                             if (guestJoinTimer) clearInterval(guestJoinTimer);
@@ -1011,7 +971,7 @@
                                 type: 'JOIN',
                                 id: myClientId,
                                 name: myName
-                            });
+                            }, 1); // Подключение идет по QoS 1
                             
                             guestJoinTimer = setInterval(() => {
                                 if (players.length > 0) {
@@ -1030,7 +990,7 @@
                                     type: 'JOIN',
                                     id: myClientId,
                                     name: myName
-                                });
+                                }, 1);
                                 joinAttempts++;
                             }, 3000);
                         } else {
@@ -1069,12 +1029,12 @@
             });
         }
 
-        function sendNetworkPayload(data) {
+        // Разделение качества обслуживания: QoS 0 для экшена, QoS 1 для транзакций
+        function sendNetworkPayload(data, qos = 0) {
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
                 data.senderId = myClientId;
-                // Отправляем с QoS: 1 для гарантированной и быстрой доставки данных
-                mqttClient.publish(roomTopic, JSON.stringify(data), { qos: 1 });
+                mqttClient.publish(roomTopic, JSON.stringify(data), { qos: qos });
             }
         }
 
@@ -1101,7 +1061,6 @@
                         log("Синхронизация с Хостом успешно завершена!", "success");
                     }
                     
-                    // Обновляем базовое состояние синхронизации у гостей всегда
                     players = msg.players;
                     chambers = msg.chambers;
                     activeIndex = msg.activeIndex;
@@ -1109,7 +1068,16 @@
                     currentPlayerIndex = msg.currentPlayerIndex;
                     isGameSessionActive = msg.isGameSessionActive;
 
-                    // Отрисовываем визуальное состояние только когда не идет локальная анимация
+                    // Принудительно скрываем оверлей смерти у гостя, если дуэль продолжается
+                    const aliveCount = players.filter(p => p.isAlive).length;
+                    if (isGameSessionActive && aliveCount > 1) {
+                        const overlay = document.getElementById('game-overlay');
+                        if (overlay && overlay.classList.contains('opacity-100')) {
+                            overlay.classList.remove('opacity-100');
+                            overlay.classList.add('opacity-0', 'pointer-events-none');
+                        }
+                    }
+
                     if (!isAnimating) {
                         applySyncedVisualState();
                     }
@@ -1146,7 +1114,6 @@
                 case 'REQUEST_FIRE':
                     if (amIHost()) {
                         const expectedShooter = players[currentPlayerIndex];
-                        // Проверка !isAnimating защищает от спама нажатий во время обработки выстрела
                         if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
                             processShotAndBroadcast();
                         }
@@ -1154,7 +1121,6 @@
                     break;
 
                 case 'FIRE_RESULT':
-                    // Принудительно запускаем выстрел с едиными параметрами от Хоста для всех участников
                     executeFireSequence(msg.isLethal, msg.activeIndex, msg.chambers, msg.players, msg.currentPlayerIndex, msg.shooterId);
                     break;
 
@@ -1187,7 +1153,7 @@
                 isCylinderClosed: isCylinderClosed,
                 currentPlayerIndex: currentPlayerIndex,
                 isGameSessionActive: isGameSessionActive
-            });
+            }, 1); // Передача базового состояния по QoS 1 для надежности
             log(`Отправлена сетевая синхронизация. Игроков в лобби: ${players.length}`, 'system');
             updatePlayersUI();
         }
@@ -1196,16 +1162,6 @@
             renderChambers();
             applyCylinderCoverState();
             updatePlayersUI();
-            
-            // Автоматическое скрытие оверлея смерти для гостей при продолжении раунда хостом
-            const aliveCount = players.filter(p => p.isAlive).length;
-            if (isOnlineMode && isGameSessionActive && aliveCount > 1) {
-                const overlay = document.getElementById('game-overlay');
-                if (overlay && overlay.classList.contains('opacity-100')) {
-                    overlay.classList.remove('opacity-100');
-                    overlay.classList.add('opacity-0', 'pointer-events-none');
-                }
-            }
             
             const dealerBox = document.getElementById('wait-message-box');
             const visualBox = document.getElementById('cylinder-visual-box');
@@ -1441,7 +1397,7 @@
             renderChambers();
 
             if (isOnlineMode) {
-                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers });
+                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers }, 0);
             }
         }
 
@@ -1455,7 +1411,7 @@
             updatePlayersUI();
 
             if (isOnlineMode) {
-                sendNetworkPayload({ type: 'CYLINDER_TOGGLE', closed: isCylinderClosed });
+                sendNetworkPayload({ type: 'CYLINDER_TOGGLE', closed: isCylinderClosed }, 0);
                 sendStateSyncPayload();
             }
         }
@@ -1488,7 +1444,7 @@
                     type: 'SPIN_RUN',
                     targetIndex: nextChamber,
                     spins: fullSpins
-                });
+                }, 0);
                 activeIndex = nextChamber;
                 
                 if (amIHost()) {
@@ -1558,7 +1514,7 @@
                         fireBtn.textContent = "ВЫСТРЕЛ...";
                         fireBtn.className = "flex-1 bg-gray-900 border border-gray-880 text-gray-600 font-bold py-3.5 px-6 rounded-md uppercase tracking-wider cursor-not-allowed";
                     }
-                    sendNetworkPayload({ type: 'REQUEST_FIRE' });
+                    sendNetworkPayload({ type: 'REQUEST_FIRE' }, 0); // QoS 0 для моментальной доставки запроса хосту
                 }
             } else {
                 processOfflineShot();
@@ -1566,9 +1522,9 @@
         }
 
         function processShotAndBroadcast() {
+            if (isAnimating) return; // Исключает дублирование при спаме хоста/сетевом лаге
+
             const shooter = players[currentPlayerIndex];
-            
-            // Сначала происходит поворот барабана на следующую камору!
             const targetChamberIndex = (activeIndex + 1) % 6; 
             const isLethal = (chambers[targetChamberIndex] === 1);
             
@@ -1592,7 +1548,7 @@
                 } while (!updatedPlayers[nextPlayerIndex].isAlive);
             }
 
-            // Рассылаем финальный просчитанный результат абсолютно всем гостям с QoS 1
+            // Отправляем с QoS 0, чтобы мгновенно передать данные на экраны игроков без ожидания PUBACK от сервера
             sendNetworkPayload({
                 type: 'FIRE_RESULT',
                 activeIndex: targetChamberIndex,
@@ -1601,7 +1557,7 @@
                 players: updatedPlayers,
                 currentPlayerIndex: nextPlayerIndex,
                 shooterId: shooter.id
-            });
+            }, 0);
 
             // Локальный запуск анимации выстрела у самого себя
             executeFireSequence(isLethal, targetChamberIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
@@ -1646,8 +1602,9 @@
             const gunBodyGroup = document.getElementById('gun-body-group');
             const cylinderFace = document.getElementById('cylinder-face-svg');
 
-            const shooter = nextPlayers.find(p => p.id === shooterId);
-            log(`[${shooter ? shooter.name : 'Игрок'}] нажал на спуск...`, 'default');
+            // Находим стрелка в старом или новом массиве
+            const shooter = players.find(p => p.id === shooterId) || nextPlayers.find(p => p.id === shooterId) || { name: "Игрок" };
+            log(`[${shooter.name}] нажал на спуск...`, 'default');
             
             hammer.style.transform = 'rotate(-32deg)';
             trigger.style.transform = 'rotate(-15deg)';
@@ -1675,13 +1632,13 @@
                     document.getElementById('muzzle-flash').classList.add('flash-active');
                     document.body.classList.add('shake-screen');
 
-                    log(`[${shooter ? shooter.name : 'Игрок'}] - СМЕРТЕЛЬНЫЙ ВЫСТРЕЛ!`, 'danger');
+                    log(`[${shooter.name}] - СМЕРТЕЛЬНЫЙ ВЫСТРЕЛ!`, 'danger');
                 } else {
                     playEmptyClickSound();
                     triggerHaptic('click');
                     gunBodyGroup.classList.add('misfire-active');
 
-                    log(`[${shooter ? shooter.name : 'Игрок'}] - ОБЛЕГЧЕНИЕ. Осечка!`, 'success');
+                    log(`[${shooter.name}] - ОБЛЕГЧЕНИЕ. Осечка!`, 'success');
                 }
 
                 // 3. Завершение анимации и жесткое выравнивание игрового состояния
@@ -1691,17 +1648,26 @@
                     document.getElementById('muzzle-flash').classList.remove('flash-active');
                     document.body.classList.remove('shake-screen');
 
+                    // Умное вычисление погибшего игрока на основе сравнения списков ДО и ПОСЛЕ
+                    const previouslyAlive = players.filter(p => p.isAlive);
+                    const newlyAlive = nextPlayers.filter(p => p.isAlive);
+                    
+                    let deadPlayer = null;
+                    if (newlyAlive.length < previouslyAlive.length) {
+                        deadPlayer = previouslyAlive.find(p => !nextPlayers.find(np => np.id === p.id && np.isAlive));
+                    }
+
                     // Обновляем состояние до того, что прислал Хост
                     chambers = nextChambers;
                     players = nextPlayers;
                     currentPlayerIndex = nextPlayerIdx;
-                    activeIndex = shotIndex; // Выравниваем индекс каморы с хостом
+                    activeIndex = shotIndex;
 
                     renderChambers();
                     updatePlayersUI();
 
                     // Запускаем проверку состояния игры
-                    checkGameStatus(isLethal ? shooter : null);
+                    checkGameStatus(deadPlayer);
 
                 }, 450); // Даем анимации отыграть
 
@@ -1838,7 +1804,7 @@
                 type: 'PROPOSE_REPLAY',
                 senderName: myName,
                 senderId: myClientId
-            });
+            }, 0);
 
             log('Вы предложили сыграть заново. Ожидание хоста...', 'system');
 
@@ -1882,7 +1848,7 @@
 
         function resetRoundNetwork() {
             if (!amIHost()) return;
-            sendNetworkPayload({ type: 'RESET_ROUND' });
+            sendNetworkPayload({ type: 'RESET_ROUND' }, 1); // Перезагрузка раунда по QoS 1 для гарантии
             resetFullSessionLocal();
         }
 
@@ -1947,7 +1913,6 @@
             currentPlayerIndex = 0;
             proposedReplayPlayers = []; 
 
-            // Сбрасываем таймер сопряжения
             if (guestJoinTimer) {
                 clearInterval(guestJoinTimer);
                 guestJoinTimer = null;
@@ -2024,7 +1989,7 @@
             renderChambers();
 
             if (isOnlineMode) {
-                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers });
+                sendNetworkPayload({ type: 'LOAD_CHAMBER', chambers: chambers }, 0);
             }
         }
 
@@ -2038,7 +2003,7 @@
             renderChambers();
 
             if (isOnlineMode) {
-                sendNetworkPayload({ type: 'EXTRACT' });
+                sendNetworkPayload({ type: 'EXTRACT' }, 0);
             }
         }
     </script>
