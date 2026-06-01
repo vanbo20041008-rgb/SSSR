@@ -459,9 +459,8 @@
 
     <script>
         // === НАСТРОЙКИ TELEGRAM БОТА ДЛЯ ПРИГЛАШЕНИЙ ===
-        // Укажите здесь параметры вашего бота, зарегистрированного в @BotFather
-        const TG_BOT_USERNAME = "Revolve_SSSR_bot";     // Юзернейм вашего бота (например, "revolver_357_bot") без знака @
-        const TG_APP_SHORTNAME = "Lunyshko";           // Короткое имя Mini App (например, "play" или "game")
+        const TG_BOT_USERNAME = "Revolve_SSSR_bot";     // Юзернейм бота
+        const TG_APP_SHORTNAME = "Lunyshko";           // Короткое имя Mini App
 
         // Инициализация Telegram WebApp SDK
         const tg = window.Telegram ? window.Telegram.WebApp : null;
@@ -478,6 +477,7 @@
         let myClientId = 'pl_' + Math.random().toString(36).substring(2, 9);
         let myName = "Игрок";
         let connectTimeout = null;
+        let guestJoinTimer = null; // Глобальный цикличный таймер на сопряжение для Гостя
 
         // Состояние локальной / сетевой игры
         let players = [];
@@ -691,16 +691,32 @@
                 myName = "Игрок_" + Math.floor(100 + Math.random() * 900);
             }
 
+            // Пытаемся считать start_param из SDK
             let startParam = null;
             if (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) {
                 startParam = tg.initDataUnsafe.start_param;
+                log(`Получен start_param из Telegram SDK: ${startParam}`, 'system');
+            }
+            
+            // Резервный парсинг start_param прямо из URL фрейма
+            if (!startParam) {
+                const urlParams = new URLSearchParams(window.location.search);
+                startParam = urlParams.get('tgWebAppStartParam') || urlParams.get('startapp');
+                if (startParam) {
+                    log(`Получен start_param из URL фрейма: ${startParam}`, 'system');
+                }
             }
 
             let hashParam = window.location.hash ? window.location.hash.substring(1) : null;
+            if (hashParam) {
+                log(`Получен хэш комнаты: ${hashParam}`, 'system');
+            }
             
             let autoRoom = startParam || hashParam;
             if (autoRoom && autoRoom.length >= 2) {
+                autoRoom = autoRoom.trim().toUpperCase();
                 document.getElementById('room-input-code').value = autoRoom;
+                log(`Инициирован автопереход в комнату #${autoRoom}...`, 'system');
                 joinOnlineRoom(false);
             } else {
                 history.replaceState(null, null, ' ');
@@ -848,13 +864,11 @@
             const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(inviteText)}`;
 
             if (tg) {
-                // Если запущен внутри Telegram, открываем нативно
                 tg.openTelegramLink(telegramShareUrl);
             } else {
-                // Если запущен во внешнем браузере, открываем новую вкладку
                 window.open(telegramShareUrl, '_blank');
             }
-            log(`Подготовка приглашения в комнату #${roomId}...`, 'success');
+            log(`Ссылка-вызов для комнаты #${roomId} создана.`, 'success');
         }
 
         // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT) ---
@@ -934,18 +948,52 @@
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
                 mqttClient.subscribe(roomTopic, (err) => {
                     if (!err) {
-                        sendNetworkPayload({
-                            type: 'JOIN',
-                            id: myClientId,
-                            name: myName
-                        });
+                        log(`Канал комнаты #${roomId} успешно прослушивается.`, 'success');
+                        
+                        // Механизм цикличного сопряжения Гостя с Хостом (защита от потери пакета)
+                        if (!amIHost()) {
+                            if (guestJoinTimer) clearInterval(guestJoinTimer);
+                            
+                            let joinAttempts = 0;
+                            log("Отправка первого запроса сопряжения к Хосту...", "system");
+                            sendNetworkPayload({
+                                type: 'JOIN',
+                                id: myClientId,
+                                name: myName
+                            });
+                            
+                            guestJoinTimer = setInterval(() => {
+                                if (players.length > 0) {
+                                    // Если мы успешно получили SYNC и заполнили список игроков — прекращаем долбиться к хосту
+                                    clearInterval(guestJoinTimer);
+                                    guestJoinTimer = null;
+                                    return;
+                                }
+                                if (joinAttempts >= 8) { // 8 попыток по 3 секунды = 24 секунды
+                                    clearInterval(guestJoinTimer);
+                                    guestJoinTimer = null;
+                                    log("Хост не отвечает. Убедитесь, что создатель лобби находится на экране игры.", "warn");
+                                    return;
+                                }
+                                log(`Повторный запрос сопряжения (Попытка ${joinAttempts + 2}/10)...`, 'system');
+                                sendNetworkPayload({
+                                    type: 'JOIN',
+                                    id: myClientId,
+                                    name: myName
+                                });
+                                joinAttempts++;
+                            }, 3000);
+                        } else {
+                            log(`Комната #${roomId} готова к приему вызовов.`, 'success');
+                        }
+                    } else {
+                        log(`Ошибка подписки на канал комнаты: ${err}`, 'warn');
                     }
                 });
             });
 
             mqttClient.on('message', (topic, payload) => {
                 try {
-                    // Используем TextDecoder вместо payload.toString(), чтобы избежать сбоев разбора JSON на смартфонах и в Telegram WebApp
                     const decoder = new TextDecoder("utf-8");
                     const messageText = typeof payload === 'string' ? payload : decoder.decode(payload);
                     const message = JSON.parse(messageText);
@@ -969,7 +1017,6 @@
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
                 data.senderId = myClientId;
-                // QoS 0 предпочтительнее для реалтайм-клиента в браузере
                 mqttClient.publish(roomTopic, JSON.stringify(data), { qos: 0 });
             }
         }
@@ -982,16 +1029,23 @@
                     if (amIHost()) {
                         if (!players.some(p => p.id === msg.id)) {
                             players.push({ id: msg.id, name: msg.name, isAlive: true });
-                            log(`Игрок [${msg.name}] вошел в лобби.`, 'system');
+                            log(`Игрок [${msg.name}] успешно вошел в лобби.`, 'success');
                         } else {
-                            log(`Игрок [${msg.name}] переподключился к лобби.`, 'system');
+                            log(`Игрок [${msg.name}] переподключается...`, 'system');
                         }
-                        // Всегда высылаем полный актуальный снимок состояния гостю при его подключении
+                        // Высылаем полный актуальный снимок состояния гостю
                         sendStateSyncPayload();
                     }
                     break;
 
                 case 'SYNC':
+                    // Успешный ответ от хоста. Выключаем цикличный таймер на сопряжение
+                    if (guestJoinTimer) {
+                        clearInterval(guestJoinTimer);
+                        guestJoinTimer = null;
+                        log("Синхронизация с Хостом успешно завершена!", "success");
+                    }
+                    
                     players = msg.players;
                     chambers = msg.chambers;
                     activeIndex = msg.activeIndex;
@@ -1025,7 +1079,6 @@
                     break;
 
                 case 'REQUEST_FIRE':
-                    // Выстрел по запросу Гостя (выполняется только на стороне Дилера для контроля состояния)
                     if (amIHost()) {
                         const expectedShooter = players[currentPlayerIndex];
                         if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
@@ -1041,7 +1094,6 @@
                     break;
 
                 case 'TRIGGER_FIRE':
-                    // Синхронизируем состояние каморы перед выстрелом, чтобы избежать расхождений из-за пинга
                     activeIndex = msg.activeIndex;
                     chambers = msg.chambers;
                     currentPlayerIndex = msg.currentPlayerIndex;
@@ -1084,6 +1136,7 @@
                 currentPlayerIndex: currentPlayerIndex,
                 isGameSessionActive: isGameSessionActive
             });
+            log(`Отправлена сетевая синхронизация. Игроков в лобби: ${players.length}`, 'system');
             updatePlayersUI();
         }
 
@@ -1103,7 +1156,7 @@
                     if (startGameBtn) startGameBtn.classList.remove('hidden');
                     document.getElementById('control-panel-title').textContent = "Управление (Вы Дилер)";
                 } else {
-                    if (startGameBtn) startGameBtn.classList.add('hidden'); // Гость не должен видеть кнопку запуска
+                    if (startGameBtn) startGameBtn.classList.add('hidden'); 
                     if (!isGameSessionActive) {
                         if (dealerBox) dealerBox.classList.remove('hidden');
                         if (visualBox) visualBox.classList.add('hidden');
@@ -1152,7 +1205,6 @@
             showScreen('game');
             document.getElementById('session-label').innerHTML = 'Локальная дуэль (Hot-Seat)';
             
-            // Настройка лобби и сброс кнопки
             document.getElementById('lobby-panel').classList.remove('hidden');
             document.getElementById('btn-start-game').classList.remove('hidden');
             document.getElementById('btn-start-game').textContent = "ПОДТВЕРДИТЬ ИГРОКОВ";
@@ -1161,7 +1213,6 @@
             document.getElementById('cylinder-visual-box').classList.add('hidden');
             document.getElementById('wait-message-box').classList.add('hidden');
 
-            // Восстанавливаем кнопки быстрого снаряжения в подготовке
             document.getElementById('btn-load-1').classList.remove('hidden');
             document.getElementById('btn-load-3').classList.remove('hidden');
             document.getElementById('btn-extract').classList.remove('hidden');
@@ -1220,7 +1271,6 @@
                 }
                 isGameSessionActive = true;
                 
-                // Принудительно закрываем барабан, чтобы игроки не застревали в режиме подготовки
                 isCylinderClosed = true;
                 applyCylinderCoverState();
 
@@ -1233,7 +1283,6 @@
                 isGameSessionActive = true;
                 currentPlayerIndex = 0;
                 
-                // Скрываем настройку лобби и открываем барабан
                 document.getElementById('lobby-panel').classList.add('hidden');
                 document.getElementById('cylinder-visual-box').classList.remove('hidden');
                 document.getElementById('btn-start-game').classList.add('hidden');
@@ -1242,10 +1291,8 @@
                 document.getElementById('btn-extract').classList.add('hidden');
                 document.getElementById('quick-action-row').classList.add('hidden');
                 
-                // Показываем кнопку сброса дуэли во время игры
                 document.getElementById('btn-reset-lobby').classList.remove('hidden');
 
-                // Прямой вызов скрытия патронов, чтобы избежать бага с инверсией вызова toggleCylinder()
                 isCylinderClosed = true;
                 applyCylinderCoverState();
                 log('Оффлайн раунд начат. Дилер скрыл каморы.', 'system');
@@ -1309,8 +1356,6 @@
 
             const isHost = amIHost();
             document.getElementById('btn-toggle-cylinder').disabled = !isHost;
-            
-            // Барабан может крутить Хост в любое время или Гость, когда настал именно его ход во время активной игры
             document.getElementById('btn-spin').disabled = !(isHost || (isOnlineMode && isMyTurn && isCylinderClosed && isGameSessionActive));
             
             document.getElementById('btn-load-1').disabled = !isHost;
@@ -1386,7 +1431,6 @@
                 });
                 activeIndex = nextChamber;
                 
-                // Только хост отсылает полный слепок состояния во избежание десинхронизации
                 if (amIHost()) {
                     sendStateSyncPayload();
                 }
@@ -1444,7 +1488,6 @@
 
             if (isOnlineMode) {
                 if (amIHost()) {
-                    // Хост вещает выстрел всем гостям
                     sendNetworkPayload({ 
                         type: 'TRIGGER_FIRE',
                         activeIndex: activeIndex,
@@ -1453,9 +1496,8 @@
                     });
                     executeFireSequence();
                 } else {
-                    // Гость делает запрос выстрела Хосту
                     sendNetworkPayload({ type: 'REQUEST_FIRE' });
-                    isAnimating = true; // Блокировка кнопки до подтверждения сетевого пакета
+                    isAnimating = true; 
                 }
             } else {
                 executeFireSequence();
@@ -1502,17 +1544,14 @@
                     chambers[activeIndex] = 2; // гильза отстрелена
                     if (shooter) shooter.isAlive = false;
 
-                    // Мгновенное обновление статуса на "Умер" в табличке перед открытием оверлея
                     updatePlayersUI(); 
 
                     log(`[${shooter ? shooter.name : 'Игрок'}] - СМЕРТЕЛЬНЫЙ ВЫСТРЕЛ!`, 'danger');
 
-                    // Хост синхронизирует финальное состояние с другими игроками после попадания
                     if (isOnlineMode && amIHost()) {
                         sendStateSyncPayload();
                     }
 
-                    // Моментальный показ полностью непрозрачного оверлея исхода
                     setTimeout(() => {
                         handleShotOutcome(shooter);
                     }, 150);
@@ -1556,7 +1595,6 @@
             currentPlayerIndex = nextIndex;
             updatePlayersUI();
 
-            // Хост отправляет финальную синхронизацию после переключения очереди, чтобы Гость разблокировал кнопку выстрела
             if (isOnlineMode && amIHost()) {
                 sendStateSyncPayload();
             }
@@ -1581,7 +1619,6 @@
                 title.textContent = "ПОБЕДИТЕЛЬ!";
                 title.className = "text-5xl font-black text-emerald-500 tracking-wider mb-4 drop-shadow-[0_4px_10px_rgba(16,185,129,0.4)]";
                 
-                // Оверлей дуэли с выделенным блоком для отображения предложений
                 msg.innerHTML = `
                     <div class="text-gray-100 text-sm mb-6 uppercase tracking-wider leading-relaxed">
                         Игрок <span class="text-red-500 font-bold">${deadPlayer ? deadPlayer.name : 'Игрок'}</span> застрелился.<br><br>Дуэль завершена! Победитель: <span class="text-emerald-400 font-bold text-xl">${winner.name}</span>
@@ -1591,14 +1628,12 @@
 
                 if (isOnlineMode) {
                     if (isHost) {
-                        // Дилер может сразу перезапустить игру
                         btn.textContent = "Новый раунд";
                         btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
                         btn.onclick = () => {
                             resetRoundNetwork();
                         };
                     } else {
-                        // Гость отправляет запрос переигровки
                         if (proposedReplayPlayers.some(p => p.id === myClientId)) {
                             btn.textContent = "Предложение отправлено";
                             btn.disabled = true;
@@ -1619,7 +1654,6 @@
                     };
                 }
 
-                // Рендерим предложения, пришедшие по сети до открытия оверлея
                 const noticesContainer = document.getElementById('replay-notices-container');
                 if (noticesContainer) {
                     proposedReplayPlayers.forEach(p => {
@@ -1683,7 +1717,6 @@
             btn.disabled = true;
             btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
 
-            // Выводим плашку локально у себя в оверлее и заносим в массив
             if (!proposedReplayPlayers.some(p => p.id === myClientId)) {
                 proposedReplayPlayers.push({ id: myClientId, name: myName });
             }
@@ -1792,10 +1825,15 @@
 
             players.forEach(p => p.isAlive = true);
             currentPlayerIndex = 0;
-            proposedReplayPlayers = []; // Сброс списка переигровок для новой сессии
+            proposedReplayPlayers = []; 
+
+            // Сбрасываем таймер сопряжения
+            if (guestJoinTimer) {
+                clearInterval(guestJoinTimer);
+                guestJoinTimer = null;
+            }
 
             document.getElementById('btn-reset-lobby').classList.add('hidden');
-            // Скрываем кнопку приглашения при возврате в меню или сбросе
             document.getElementById('btn-invite').classList.add('hidden');
 
             if (isOnlineMode) {
