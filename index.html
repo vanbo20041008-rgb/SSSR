@@ -1058,6 +1058,7 @@
                             if (guestJoinTimer) clearInterval(guestJoinTimer);
                             let joinAttempts = 0;
                             guestJoinTimer = setInterval(() => {
+                                // Гость проверяет: внесен ли его myPlayerId в список игроков?
                                 const amIInList = players.some(p => p.id === myPlayerId);
                                 if (amIInList) {
                                     clearInterval(guestJoinTimer);
@@ -1077,7 +1078,7 @@
                                     name: myName
                                 }, 0);
                                 joinAttempts++;
-                            }, 1500); 
+                            }, 1500); // Повышенная частота для мгновенной стыковки на плохом интернете
                         }
                     } else {
                         log(`Ошибка сетевой подписки: ${err.message}`, 'warn');
@@ -1093,6 +1094,7 @@
 
             mqttClient.on('message', (topic, payload) => {
                 try {
+                    // Универсальный разбор бинарных пакетов от брокера
                     let messageText;
                     if (typeof payload === 'string') {
                         messageText = payload;
@@ -1118,6 +1120,7 @@
             });
         }
 
+        // QoS 0 по умолчанию для мгновенного пинга в игре; QoS 1 для транзакций настроек
         function sendNetworkPayload(data, qos = 0) {
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
@@ -1240,7 +1243,8 @@
                         clearTimeout(fireRequestTimeout);
                         fireRequestTimeout = null;
                     }
-                    executeFireSequence(msg.isLethal, msg.activeIndex, msg.chambers, msg.players, msg.currentPlayerIndex, msg.shooterId);
+                    // Передаем явный deadPlayerId, вычисленный Хостом, чтобы избежать зависаний при рассинхронах SYNC
+                    executeFireSequence(msg.isLethal, msg.activeIndex, msg.chambers, msg.players, msg.currentPlayerIndex, msg.shooterId, msg.deadPlayerId);
                     break;
 
                 case 'RESET_ROUND':
@@ -1272,6 +1276,7 @@
 
         function sendStateSyncPayload() {
             if (!amIHost()) return;
+            // Перевод SYNC на QoS 0 для избавления от лагов повторных пакетов брокера
             sendNetworkPayload({
                 type: 'SYNC',
                 players: players,
@@ -1659,7 +1664,7 @@
                     
                     if (fireRequestTimeout) clearTimeout(fireRequestTimeout);
                     
-                    // Клиентская защита от потери сетевого пакета
+                    // Клиентская защита от потери сетевого пакета: восстанавливает кнопку через 2.5 сек, если произошел сбой на сервере
                     fireRequestTimeout = setTimeout(() => {
                         if (isGameSessionActive && !isAnimating) {
                             const currentShooter = players[currentPlayerIndex];
@@ -1688,8 +1693,10 @@
             let updatedPlayers = JSON.parse(JSON.stringify(players));
             let nextPlayerIndex = currentPlayerIndex;
 
+            let deadPlayerId = null;
             if (isLethal) {
                 updatedChambers[targetChamberIndex] = 2; // патрон отстрелен, осталась гильза
+                deadPlayerId = shooter.id;
                 const deadIdx = updatedPlayers.findIndex(p => p.id === shooter.id);
                 if (deadIdx !== -1) {
                     updatedPlayers[deadIdx].isAlive = false;
@@ -1715,11 +1722,12 @@
                 chambers: updatedChambers,
                 players: updatedPlayers,
                 currentPlayerIndex: nextPlayerIndex,
-                shooterId: shooter.id
+                shooterId: shooter.id,
+                deadPlayerId: deadPlayerId // Явный ID погибшего для клиентов
             }, 0);
 
             // Локальный запуск анимации выстрела у самого себя
-            executeFireSequence(isLethal, targetChamberIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
+            executeFireSequence(isLethal, targetChamberIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id, deadPlayerId);
         }
 
         function processOfflineShot() {
@@ -1731,8 +1739,10 @@
             let updatedPlayers = JSON.parse(JSON.stringify(players));
             let nextPlayerIndex = currentPlayerIndex;
 
+            let deadPlayerId = null;
             if (isLethal) {
                 updatedChambers[targetChamberIndex] = 2;
+                deadPlayerId = shooter.id;
                 const deadIdx = updatedPlayers.findIndex(p => p.id === shooter.id);
                 if (deadIdx !== -1) {
                     updatedPlayers[deadIdx].isAlive = false;
@@ -1750,12 +1760,12 @@
                 } while (!updatedPlayers[nextPlayerIndex].isAlive);
             }
 
-            executeFireSequence(isLethal, targetChamberIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
+            executeFireSequence(isLethal, targetChamberIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id, deadPlayerId);
         }
 
         // --- ЕДИНАЯ СИНХРОННАЯ АНИМАЦИЯ ВЫСТРЕЛА ---
 
-        function executeFireSequence(isLethal, shotIndex, nextChambers, nextPlayers, nextPlayerIdx, shooterId) {
+        function executeFireSequence(isLethal, shotIndex, nextChambers, nextPlayers, nextPlayerIdx, shooterId, deadPlayerId = null) {
             isAnimating = true;
 
             const hammer = document.getElementById('gun-hammer');
@@ -1807,14 +1817,8 @@
                     document.getElementById('muzzle-flash').classList.remove('flash-active');
                     document.body.classList.remove('shake-screen');
 
-                    // Умное вычисление погибшего игрока на основе сравнения списков ДО и ПОСЛЕ
-                    const previouslyAlive = players.filter(p => p.isAlive);
-                    const newlyAlive = nextPlayers.filter(p => p.isAlive);
-                    
-                    let deadPlayer = null;
-                    if (newlyAlive.length < previouslyAlive.length) {
-                        deadPlayer = previouslyAlive.find(p => !nextPlayers.find(np => np.id === p.id && np.isAlive));
-                    }
+                    // Нахождение погибшего игрока по надежному ID от хоста
+                    const deadPlayer = deadPlayerId ? nextPlayers.find(p => p.id === deadPlayerId) : null;
 
                     // Обновляем состояние до того, что прислал Хост
                     chambers = nextChambers;
@@ -2030,7 +2034,7 @@
                 log(`Дилером становится следующий по очереди игрок: [${rotatedPlayers[0].name}]`, 'system');
             }
 
-            // Рассылаем игрокам команду сброса раунда вместе с новым списком игроков
+            // Рассылаем игрокам команду сброса раунда вместе с новым списком игроков (сменившим дилера)
             sendNetworkPayload({ 
                 type: 'RESET_ROUND',
                 players: rotatedPlayers
@@ -2115,6 +2119,12 @@
 
             if (isOnlineMode) {
                 applySyncedVisualState();
+                
+                // Если мы новый Хост (после ротации дилера в реванше), немедленно рассылаем стартовую синхронизацию всем клиентам
+                if (amIHost()) {
+                    sendStateSyncPayload();
+                }
+                
                 document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
             } else {
                 document.getElementById('lobby-panel').classList.remove('hidden');
