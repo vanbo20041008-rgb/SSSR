@@ -154,14 +154,22 @@
             <div class="lg:col-span-7 bg-gray-900 bg-opacity-40 border border-gray-850 p-6 flex flex-col justify-between relative rounded-lg overflow-hidden min-h-[360px]">
                 
                 <!-- Адаптивная шапка с приглашением и статусом сессии -->
-                <div class="absolute top-2 left-3 right-3 flex justify-between items-center gap-2 z-20">
-                    <div id="session-label" class="text-[10px] text-gray-500 tracking-widest uppercase truncate max-w-[65%] sm:max-w-none">Сессия</div>
-                    <button id="btn-invite" onclick="inviteFriend()" class="hidden bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-amber-600/30">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.684 10.742l4.636-2.318m0 0l4.636 2.318m-9.272 0a5.002 5.002 0 0110.428-2.658L17.368 13.5m-8.684-2.758a5.002 5.002 0 0010.428 2.658L17.368 13.5m0-4.5V3m0 0l-3 3m3-3l3 3"/>
-                        </svg>
-                        Пригласить
-                    </button>
+                <div class="absolute top-2 left-3 right-3 flex justify-between items-center gap-1 z-20">
+                    <div id="session-label" class="text-[10px] text-gray-500 tracking-widest uppercase truncate max-w-[50%] sm:max-w-none">Сессия</div>
+                    <div class="flex gap-1.5">
+                        <button id="btn-invite" onclick="inviteFriend()" class="hidden bg-amber-700 hover:bg-amber-600 text-white text-[9px] font-bold px-2 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-amber-600/30">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8.684 10.742l4.636-2.318m0 0l4.636 2.318m-9.272 0a5.002 5.002 0 0110.428-2.658L17.368 13.5m-8.684-2.758a5.002 5.002 0 0010.428 2.658L17.368 13.5m0-4.5V3m0 0l-3 3m3-3l3 3"/>
+                            </svg>
+                            Пригласить
+                        </button>
+                        <button id="btn-copy-link" onclick="copyInviteLink()" class="hidden bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 002-2h2a2 2 0 002 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/>
+                            </svg>
+                            Ссылка
+                        </button>
+                    </div>
                 </div>
                 
                 <div class="flex justify-between items-center z-10 pt-4">
@@ -871,6 +879,46 @@
             log(`Ссылка-вызов для комнаты #${roomId} создана.`, 'success');
         }
 
+        // --- КОПИРОВАНИЕ ПРЯМОЙ ССЫЛКИ ДЛЯ ДРУГИХ МЕССЕНДЖЕРОВ ---
+
+        function copyInviteLink() {
+            if (!roomId) return;
+            initAudio();
+            playClickSound(1100, 0.05, 0.15);
+
+            const shareUrl = `https://t.me/${TG_BOT_USERNAME}/${TG_APP_SHORTNAME}?startapp=${roomId}`;
+            
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    log(`Прямая ссылка для входа скопирована! Вы можете отправить её в WhatsApp, VK, Discord или другие мессенджеры.`, 'success');
+                    showTemporaryLinkFeedback();
+                }).catch(() => {
+                    fallbackCopy(shareUrl);
+                });
+            } else {
+                fallbackCopy(shareUrl);
+            }
+        }
+
+        function showTemporaryLinkFeedback() {
+            const btn = document.getElementById('btn-copy-link');
+            if (btn) {
+                const originalText = btn.innerHTML;
+                btn.innerHTML = `
+                    <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Скопировано!
+                `;
+                btn.className = "bg-emerald-950 text-emerald-400 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-emerald-900/40";
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.className = "bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer border border-gray-750";
+                }, 2000);
+            }
+            triggerHaptic('spin');
+        }
+
         // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT) ---
 
         function createOnlineRoom() {
@@ -895,8 +943,9 @@
             showScreen('game');
             document.getElementById('session-label').innerHTML = `Сетевая комната: <span class="text-amber-500 font-bold cursor-pointer hover:text-amber-400 select-all border-b border-dashed border-amber-600 pb-0.5" onclick="copyRoomCode()">${roomId}</span> <span id="copy-indicator" class="text-[9px] text-gray-500 font-normal lowercase">(нажмите для копирования)</span>`;
             
-            // Делаем видимой кнопку нативного приглашения
+            // Делаем видимыми кнопку нативного приглашения и кнопку копирования ссылки
             document.getElementById('btn-invite').classList.remove('hidden');
+            document.getElementById('btn-copy-link').classList.remove('hidden');
 
             document.getElementById('lobby-panel').classList.add('hidden');
             document.getElementById('cylinder-visual-box').classList.remove('hidden');
@@ -915,7 +964,7 @@
 
         function connectToNetworkBroker() {
             initAudio();
-            log(`Подключение к сетевому брокеру для комнаты #${roomId}...`, 'system');
+            log(`Подключение к стабильному брокеру HiveMQ для комнаты #${roomId}...`, 'system');
             
             const statusLabel = document.getElementById('network-status');
             statusLabel.textContent = 'Подключение...';
@@ -923,7 +972,7 @@
 
             connectTimeout = setTimeout(() => {
                 if (mqttClient && !mqttClient.connected) {
-                    log('Превышено время ожидания сети. Проверьте соединение.', 'warn');
+                    log('Превышено время ожидания сети. Проверьте интернет-соединение.', 'warn');
                     statusLabel.textContent = 'Связь: ОФФЛАЙН';
                     statusLabel.className = 'px-2 py-0.5 text-[9px] bg-red-950 text-red-400 border border-red-900/40 rounded uppercase font-bold';
                     mqttClient.end(true);
@@ -931,12 +980,13 @@
                 }
             }, 7000);
 
-            mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+            // Подключение по WSS протоколу к глобальному отказоустойчивому брокеру HiveMQ Cloud
+            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
                 clientId: myClientId,
-                keepalive: 60,
+                keepalive: 30, // Более частый keepalive для предотвращения «засыпания» мобильных браузеров
                 clean: true,
-                connectTimeout: 4000,
-                reconnectPeriod: 2000 // Автоподключение каждые 2 секунды при разрыве связи
+                connectTimeout: 5000,
+                reconnectPeriod: 1500 // Более быстрое автовосстановление связи в случае сбоя
             });
 
             mqttClient.on('connect', () => {
@@ -952,6 +1002,9 @@
                         
                         // Механизм цикличного сопряжения Гостя с Хостом (защита от потери пакета)
                         if (!amIHost()) {
+                            // Очищаем старый список лобби перед сопряжением во избежание фантомных кэшей при реконнекте
+                            players = [];
+                            
                             if (guestJoinTimer) clearInterval(guestJoinTimer);
                             
                             let joinAttempts = 0;
@@ -990,6 +1043,12 @@
                         log(`Ошибка подписки на канал комнаты: ${err}`, 'warn');
                     }
                 });
+            });
+
+            mqttClient.on('reconnect', () => {
+                log('Потеря связи. Попытка переподключения к серверу...', 'warn');
+                statusLabel.textContent = 'Подключение...';
+                statusLabel.className = 'px-2 py-0.5 text-[9px] bg-yellow-900 text-yellow-400 border border-yellow-800 rounded uppercase font-bold';
             });
 
             mqttClient.on('message', (topic, payload) => {
@@ -1889,6 +1948,7 @@
 
             document.getElementById('btn-reset-lobby').classList.add('hidden');
             document.getElementById('btn-invite').classList.add('hidden');
+            document.getElementById('btn-copy-link').classList.add('hidden');
 
             if (isOnlineMode) {
                 applySyncedVisualState();
