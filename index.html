@@ -17,6 +17,11 @@
             background-image: radial-gradient(circle at center, #141212 0%, #080707 100%);
         }
 
+        /* Аппаратное ускорение графики (GPU) для устранения микрофризов */
+        #gun-body-group, #cylinder-face-svg, #gun-hammer, #gun-trigger, #muzzle-flash {
+            will-change: transform, filter, opacity;
+        }
+
         /* Анимация отдачи оружия */
         @keyframes recoil {
             0% { transform: rotate(0deg) translate(0, 0); }
@@ -483,12 +488,15 @@
         let isOnlineMode = false;
         let roomId = null;
         
-        // Устранение конфликтов Client ID: уникальный идентификатор с таймстампом
-        let myClientId = sessionStorage.getItem('revolver_client_id');
-        if (!myClientId) {
-            myClientId = 'pl_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
-            sessionStorage.setItem('revolver_client_id', myClientId);
+        // Постоянный ID игрока для надежной игровой логики
+        let myPlayerId = sessionStorage.getItem('revolver_player_id');
+        if (!myPlayerId) {
+            myPlayerId = 'pl_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
+            sessionStorage.setItem('revolver_player_id', myPlayerId);
         }
+        
+        // Временный уникальный ID сокета для подключения к MQTT (устраняет сбросы соединения)
+        let mqttClientId = 'mqtt_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
         
         let myName = "Игрок";
         let connectTimeout = null;
@@ -515,7 +523,8 @@
 
         function initAudio() {
             if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                window.AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
                 masterGain = audioCtx.createGain();
                 masterGain.connect(audioCtx.destination);
                 updateVolume();
@@ -988,7 +997,7 @@
             document.getElementById('btn-start-game').textContent = "НАЧАТЬ СЕТЕВУЮ ДУЭЛЬ";
 
             if (isCreator) {
-                players = [{ id: myClientId, name: myName, isAlive: true }];
+                players = [{ id: myPlayerId, name: myName, isAlive: true }];
             } else {
                 players = [];
             }
@@ -1018,7 +1027,7 @@
 
             // Оптимизированные параметры соединения для мобильных сетей и ПК
             mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
-                clientId: myClientId,
+                clientId: mqttClientId, // Исключает перезагрузочные конфликты сессий на сервере
                 keepalive: 60, // Устойчивость к фоновому режиму Telegram
                 clean: true,
                 connectTimeout: 8000,
@@ -1042,15 +1051,15 @@
                             log("Отправка запроса синхронизации Хосту...", "system");
                             sendNetworkPayload({
                                 type: 'JOIN',
-                                id: myClientId,
+                                id: myPlayerId,
                                 name: myName
-                            }, 1); 
+                            }, 0); 
                             
                             if (guestJoinTimer) clearInterval(guestJoinTimer);
                             let joinAttempts = 0;
                             guestJoinTimer = setInterval(() => {
-                                // Гость проверяет: внесен ли его myClientId в список игроков?
-                                const amIInList = players.some(p => p.id === myClientId);
+                                // Гость проверяет: внесен ли его myPlayerId в список игроков?
+                                const amIInList = players.some(p => p.id === myPlayerId);
                                 if (amIInList) {
                                     clearInterval(guestJoinTimer);
                                     guestJoinTimer = null;
@@ -1065,11 +1074,11 @@
                                 log("Повторный запрос синхронизации у Хоста...", "system");
                                 sendNetworkPayload({
                                     type: 'JOIN',
-                                    id: myClientId,
+                                    id: myPlayerId,
                                     name: myName
-                                }, 1);
+                                }, 0);
                                 joinAttempts++;
-                            }, 2500);
+                            }, 1500); // Повышенная частота для мгновенной стыковки на плохом интернете
                         }
                     } else {
                         log(`Ошибка сетевой подписки: ${err.message}`, 'warn');
@@ -1096,7 +1105,7 @@
                     }
                     const message = JSON.parse(messageText);
 
-                    if (message.senderId === myClientId) return; 
+                    if (message.senderId === myPlayerId) return; 
                     handleIncomingNetworkMessage(message);
                 } catch (e) {
                     console.error('Ошибка декодирования пакета:', e);
@@ -1115,7 +1124,7 @@
         function sendNetworkPayload(data, qos = 0) {
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
-                data.senderId = myClientId;
+                data.senderId = myPlayerId;
                 mqttClient.publish(roomTopic, JSON.stringify(data), { qos: qos });
             }
         }
@@ -1140,8 +1149,14 @@
                     break;
 
                 case 'SYNC':
+                    if (isAnimating) {
+                        // Если в данный момент крутится барабан или происходит выстрел,
+                        // полностью игнорируем фоновую синхронизацию, чтобы не перезаписать переменные до конца анимации.
+                        break;
+                    }
+
                     // Гость считает синхронизацию выполненной только в том случае, если хост внес его в игровое лобби
-                    const amIInList = msg.players.some(p => p.id === myClientId);
+                    const amIInList = msg.players.some(p => p.id === myPlayerId);
                     
                     if (amIInList) {
                         if (guestJoinTimer) {
@@ -1155,9 +1170,9 @@
                             log("Получен статус комнаты, но нас еще нет в списке участников. Запрос регистрации...", "warn");
                             sendNetworkPayload({
                                 type: 'JOIN',
-                                id: myClientId,
+                                id: myPlayerId,
                                 name: myName
-                            }, 1);
+                            }, 0);
                         }
                     }
 
@@ -1183,9 +1198,7 @@
                         }
                     }
 
-                    if (!isAnimating) {
-                        applySyncedVisualState();
-                    }
+                    applySyncedVisualState();
                     break;
 
                 case 'LOAD_CHAMBER':
@@ -1260,11 +1273,12 @@
 
         function amIHost() {
             if (!isOnlineMode) return true;
-            return players.length > 0 && players[0].id === myClientId;
+            return players.length > 0 && players[0].id === myPlayerId;
         }
 
         function sendStateSyncPayload() {
             if (!amIHost()) return;
+            // Перевод SYNC на QoS 0 для избавления от лагов повторных пакетов брокера
             sendNetworkPayload({
                 type: 'SYNC',
                 players: players,
@@ -1273,8 +1287,7 @@
                 isCylinderClosed: isCylinderClosed,
                 currentPlayerIndex: currentPlayerIndex,
                 isGameSessionActive: isGameSessionActive
-            }, 1); // QoS 1 для транзакций настройки лобби
-            log(`Отправлена сетевая синхронизация. Игроков в лобби: ${players.length}`, 'system');
+            }, 0); 
             updatePlayersUI();
         }
 
@@ -1457,7 +1470,7 @@
             if (!isOnlineMode) {
                 isMyTurn = true; 
             } else if (players[currentPlayerIndex]) {
-                isMyTurn = (players[currentPlayerIndex].id === myClientId);
+                isMyTurn = (players[currentPlayerIndex].id === myPlayerId);
             }
 
             if (!isCylinderClosed) {
@@ -1490,7 +1503,7 @@
             if (isOnlineMode) {
                 if (isGameSessionActive) {
                     const currentShooter = players[currentPlayerIndex];
-                    canSpinUI = currentShooter && (currentShooter.id === myClientId);
+                    canSpinUI = currentShooter && (currentShooter.id === myPlayerId);
                 } else {
                     canSpinUI = isHost;
                 }
@@ -1555,7 +1568,7 @@
             if (isOnlineMode) {
                 if (isGameSessionActive) {
                     const currentShooter = players[currentPlayerIndex];
-                    canSpin = currentShooter && (currentShooter.id === myClientId);
+                    canSpin = currentShooter && (currentShooter.id === myPlayerId);
                 } else {
                     canSpin = amIHost();
                 }
@@ -1655,7 +1668,7 @@
                     fireRequestTimeout = setTimeout(() => {
                         if (isGameSessionActive && !isAnimating) {
                             const currentShooter = players[currentPlayerIndex];
-                            if (currentShooter && currentShooter.id === myClientId) {
+                            if (currentShooter && currentShooter.id === myPlayerId) {
                                 log("Запрос задерживается сервером. Повторите попытку.", "warn");
                                 updatePlayersUI(); 
                             }
@@ -1869,7 +1882,7 @@
                 `;
 
                 if (isOnlineMode) {
-                    const hasIApproved = proposedReplayPlayers.some(p => p.id === myClientId);
+                    const hasIApproved = proposedReplayPlayers.some(p => p.id === myPlayerId);
                     if (hasIApproved) {
                         btn.textContent = "Реванш принят";
                         btn.disabled = true;
@@ -1946,15 +1959,15 @@
             initAudio();
             playClickSound(1100, 0.05, 0.15);
 
-            if (!proposedReplayPlayers.some(p => p.id === myClientId)) {
-                proposedReplayPlayers.push({ id: myClientId, name: myName });
+            if (!proposedReplayPlayers.some(p => p.id === myPlayerId)) {
+                proposedReplayPlayers.push({ id: myPlayerId, name: myName });
             }
 
             sendNetworkPayload({
                 type: 'PROPOSE_REPLAY',
                 senderName: myName,
-                senderId: myClientId
-            }, 1); // Передача голоса с QoS 1 для полной синхронизации
+                senderId: myPlayerId
+            }, 0); // Передача голоса с QoS 0
 
             log('Вы проголосовали за реванш!', 'system');
 
@@ -2007,7 +2020,7 @@
             sendNetworkPayload({ 
                 type: 'RESET_ROUND',
                 players: rotatedPlayers
-            }, 1); // Гарантированный сброс сессии по QoS 1
+            }, 0); // Переводим на быстрый QoS 0
 
             players = rotatedPlayers;
             resetFullSessionLocal();
