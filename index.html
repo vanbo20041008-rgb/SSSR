@@ -864,7 +864,7 @@
             initAudio();
             playClickSound(1100, 0.05, 0.15);
 
-            // Создаем красивую прямую ссылку в ваш Telegram Mini App
+            // Создаем красивую прямую ссылку в Telegram Mini App
             const shareUrl = `https://t.me/${TG_BOT_USERNAME}/${TG_APP_SHORTNAME}?startapp=${roomId}`;
             const inviteText = `🔫 ВЫЗЫВАЮ ТЕБЯ НА ДУЭЛЬ! 🔫\n\nЯ зарядил револьвер .357 и жду в комнате #${roomId}.\nКто выживет, а кто словит пулю? Заходи, если не струсил! 👇`;
             
@@ -919,7 +919,7 @@
             triggerHaptic('spin');
         }
 
-        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT) ---
+        // --- СЕТЕВОЕ ПОДКЛЮЧЕНИЕ И ОБРАБОТКА (MQTT через EMQX) ---
 
         function createOnlineRoom() {
             const generatedRoom = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -964,7 +964,7 @@
 
         function connectToNetworkBroker() {
             initAudio();
-            log(`Подключение к стабильному брокеру HiveMQ для комнаты #${roomId}...`, 'system');
+            log(`Подключение к скоростному брокеру EMQX для комнаты #${roomId}...`, 'system');
             
             const statusLabel = document.getElementById('network-status');
             statusLabel.textContent = 'Подключение...';
@@ -980,13 +980,13 @@
                 }
             }, 7000);
 
-            // Подключение по WSS протоколу к глобальному отказоустойчивому брокеру HiveMQ Cloud
-            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+            // Подключение по WSS протоколу к стабильному брокеру EMQX Cloud
+            mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
                 clientId: myClientId,
-                keepalive: 30, // Более частый keepalive для предотвращения «засыпания» мобильных браузеров
+                keepalive: 60, // Предотвращает засыпание соединения в веб-вкладках
                 clean: true,
                 connectTimeout: 5000,
-                reconnectPeriod: 1500 // Более быстрое автовосстановление связи в случае сбоя
+                reconnectPeriod: 1500
             });
 
             mqttClient.on('connect', () => {
@@ -996,15 +996,13 @@
                 statusLabel.className = 'px-2 py-0.5 text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-900/40 rounded uppercase font-bold';
 
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
-                mqttClient.subscribe(roomTopic, (err) => {
+                mqttClient.subscribe(roomTopic, { qos: 1 }, (err) => {
                     if (!err) {
                         log(`Канал комнаты #${roomId} успешно прослушивается.`, 'success');
                         
-                        // Механизм цикличного сопряжения Гостя с Хостом (защита от потери пакета)
+                        // Механизм цикличного сопряжения Гостя с Хостом
                         if (!amIHost()) {
-                            // Очищаем старый список лобби перед сопряжением во избежание фантомных кэшей при реконнекте
                             players = [];
-                            
                             if (guestJoinTimer) clearInterval(guestJoinTimer);
                             
                             let joinAttempts = 0;
@@ -1017,12 +1015,11 @@
                             
                             guestJoinTimer = setInterval(() => {
                                 if (players.length > 0) {
-                                    // Если мы успешно получили SYNC и заполнили список игроков — прекращаем слать JOIN
                                     clearInterval(guestJoinTimer);
                                     guestJoinTimer = null;
                                     return;
                                 }
-                                if (joinAttempts >= 8) { // 8 попыток по 3 секунды = 24 секунды
+                                if (joinAttempts >= 8) {
                                     clearInterval(guestJoinTimer);
                                     guestJoinTimer = null;
                                     log("Хост не отвечает. Убедитесь, что создатель лобби находится на экране игры.", "warn");
@@ -1076,7 +1073,8 @@
             if (mqttClient && mqttClient.connected) {
                 const roomTopic = `tg-revolver/rooms/${roomId}`;
                 data.senderId = myClientId;
-                mqttClient.publish(roomTopic, JSON.stringify(data), { qos: 0 });
+                // Отправляем с QoS: 1 для гарантированной и быстрой доставки данных
+                mqttClient.publish(roomTopic, JSON.stringify(data), { qos: 1 });
             }
         }
 
@@ -1103,14 +1101,16 @@
                         log("Синхронизация с Хостом успешно завершена!", "success");
                     }
                     
-                    // Обновляем состояние синхронизации, только если не идет активная анимация выстрела
+                    // Обновляем базовое состояние синхронизации у гостей всегда
+                    players = msg.players;
+                    chambers = msg.chambers;
+                    activeIndex = msg.activeIndex;
+                    isCylinderClosed = msg.isCylinderClosed;
+                    currentPlayerIndex = msg.currentPlayerIndex;
+                    isGameSessionActive = msg.isGameSessionActive;
+
+                    // Отрисовываем визуальное состояние только когда не идет локальная анимация
                     if (!isAnimating) {
-                        players = msg.players;
-                        chambers = msg.chambers;
-                        activeIndex = msg.activeIndex;
-                        isCylinderClosed = msg.isCylinderClosed;
-                        currentPlayerIndex = msg.currentPlayerIndex;
-                        isGameSessionActive = msg.isGameSessionActive;
                         applySyncedVisualState();
                     }
                     break;
@@ -1146,10 +1146,8 @@
                 case 'REQUEST_FIRE':
                     if (amIHost()) {
                         const expectedShooter = players[currentPlayerIndex];
-                        // Важно: убрали проверку !isAnimating на стороне Хоста.
-                        // Даже если Хост еще проигрывает кусок анимации, он обработает
-                        // валидный сетевой запрос выстрела и гарантированно разошлет его всем.
-                        if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive) {
+                        // Проверка !isAnimating защищает от спама нажатий во время обработки выстрела
+                        if (expectedShooter && expectedShooter.id === msg.senderId && isGameSessionActive && !isAnimating) {
                             processShotAndBroadcast();
                         }
                     }
@@ -1198,6 +1196,16 @@
             renderChambers();
             applyCylinderCoverState();
             updatePlayersUI();
+            
+            // Автоматическое скрытие оверлея смерти для гостей при продолжении раунда хостом
+            const aliveCount = players.filter(p => p.isAlive).length;
+            if (isOnlineMode && isGameSessionActive && aliveCount > 1) {
+                const overlay = document.getElementById('game-overlay');
+                if (overlay && overlay.classList.contains('opacity-100')) {
+                    overlay.classList.remove('opacity-100');
+                    overlay.classList.add('opacity-0', 'pointer-events-none');
+                }
+            }
             
             const dealerBox = document.getElementById('wait-message-box');
             const visualBox = document.getElementById('cylinder-visual-box');
@@ -1324,12 +1332,9 @@
                     return;
                 }
                 isGameSessionActive = true;
-                
                 isCylinderClosed = true;
                 applyCylinderCoverState();
 
-                // Убрали дублирующий пакет GAME_START. Все данные старта передаются 
-                // через единый пакет SYNC, что исключает сетевые рассинхроны при запуске.
                 sendStateSyncPayload();
             } else {
                 players.forEach((p, i) => {
@@ -1350,7 +1355,7 @@
 
                 isCylinderClosed = true;
                 applyCylinderCoverState();
-                log('Оффлайн раунд начат. Дилер скрыл каморы.', 'system');
+                log('Оффлайн раунд начат. Дилер закрыл каморы.', 'system');
             }
             updatePlayersUI();
         }
@@ -1545,12 +1550,8 @@
 
             if (isOnlineMode) {
                 if (amIHost()) {
-                    // Хост рассчитывает выстрел и рассылает результат всем
                     processShotAndBroadcast();
                 } else {
-                    // Отключаем кнопку сразу же на стороне Гостя локально во избежание двойных кликов.
-                    // Флаг isAnimating при этом не ставится в true на стороне Гостя — это страхует игру
-                    // от постоянной блокировки в случае сетевых задержек.
                     const fireBtn = document.getElementById('btn-fire');
                     if (fireBtn) {
                         fireBtn.disabled = true;
@@ -1560,21 +1561,23 @@
                     sendNetworkPayload({ type: 'REQUEST_FIRE' });
                 }
             } else {
-                // Оффлайн дуэль
                 processOfflineShot();
             }
         }
 
         function processShotAndBroadcast() {
             const shooter = players[currentPlayerIndex];
-            const isLethal = (chambers[activeIndex] === 1);
+            
+            // Сначала происходит поворот барабана на следующую камору!
+            const targetChamberIndex = (activeIndex + 1) % 6; 
+            const isLethal = (chambers[targetChamberIndex] === 1);
             
             let updatedChambers = [...chambers];
             let updatedPlayers = JSON.parse(JSON.stringify(players));
             let nextPlayerIndex = currentPlayerIndex;
 
             if (isLethal) {
-                updatedChambers[activeIndex] = 2; // патрон отстрелен, осталась гильза
+                updatedChambers[targetChamberIndex] = 2; // патрон отстрелен, осталась гильза
                 const deadIdx = updatedPlayers.findIndex(p => p.id === shooter.id);
                 if (deadIdx !== -1) {
                     updatedPlayers[deadIdx].isAlive = false;
@@ -1589,10 +1592,10 @@
                 } while (!updatedPlayers[nextPlayerIndex].isAlive);
             }
 
-            // Рассылаем финальный просчитанный результат абсолютно всем гостям
+            // Рассылаем финальный просчитанный результат абсолютно всем гостям с QoS 1
             sendNetworkPayload({
                 type: 'FIRE_RESULT',
-                activeIndex: activeIndex,
+                activeIndex: targetChamberIndex,
                 isLethal: isLethal,
                 chambers: updatedChambers,
                 players: updatedPlayers,
@@ -1601,19 +1604,22 @@
             });
 
             // Локальный запуск анимации выстрела у самого себя
-            executeFireSequence(isLethal, activeIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
+            executeFireSequence(isLethal, targetChamberIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
         }
 
         function processOfflineShot() {
             const shooter = players[currentPlayerIndex];
-            const isLethal = (chambers[activeIndex] === 1);
+            
+            // Барабан поворачивается на следующую камору
+            const targetChamberIndex = (activeIndex + 1) % 6;
+            const isLethal = (chambers[targetChamberIndex] === 1);
             
             let updatedChambers = [...chambers];
             let updatedPlayers = JSON.parse(JSON.stringify(players));
             let nextPlayerIndex = currentPlayerIndex;
 
             if (isLethal) {
-                updatedChambers[activeIndex] = 2;
+                updatedChambers[targetChamberIndex] = 2;
                 const deadIdx = updatedPlayers.findIndex(p => p.id === shooter.id);
                 if (deadIdx !== -1) {
                     updatedPlayers[deadIdx].isAlive = false;
@@ -1627,7 +1633,7 @@
                 } while (!updatedPlayers[nextPlayerIndex].isAlive);
             }
 
-            executeFireSequence(isLethal, activeIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
+            executeFireSequence(isLethal, targetChamberIndex, updatedChambers, updatedPlayers, nextPlayerIndex, shooter.id);
         }
 
         // --- ЕДИНАЯ СИНХРОННАЯ АНИМАЦИЯ ВЫСТРЕЛА ---
@@ -1647,9 +1653,9 @@
             trigger.style.transform = 'rotate(-15deg)';
             playCockSound();
 
-            // 1. Поворот барабана
+            // 1. Поворот барабана к целевой каморе выстрела
             setTimeout(() => {
-                activeIndex = (activeIndex + 1) % 6;
+                activeIndex = shotIndex;
                 document.getElementById('active-chamber-num').textContent = `#${activeIndex + 1}`;
                 
                 cylinderFace.style.transition = 'transform 0.15s cubic-bezier(0.2, 0.9, 0.4, 1.2)';
@@ -1866,9 +1872,6 @@
             document.getElementById('game-overlay').classList.add('opacity-0', 'pointer-events-none');
             
             isAnimating = false;
-            
-            // Внимание: очередь хода больше не вычисляется здесь. Она уже идеально переключена 
-            // в executeFireSequence! Это гарантирует отсутствие перескоков ходов при закрытии оверлея.
             
             if (isOnlineMode && amIHost()) {
                 sendStateSyncPayload();
