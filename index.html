@@ -996,6 +996,7 @@
             document.getElementById('cylinder-visual-box').classList.remove('hidden');
             document.getElementById('btn-start-game').textContent = "НАЧАТЬ СЕТЕВУЮ ДУЭЛЬ";
 
+            // Исправление: при инициализации хоста вносим myPlayerId вместо myClientId
             if (isCreator) {
                 players = [{ id: myPlayerId, name: myName, isAlive: true }];
             } else {
@@ -1886,26 +1887,18 @@
                 `;
 
                 if (isOnlineMode) {
-                    if (isHost) {
-                        // У дилера всегда активна кнопка запуска, что решает проблему зависания при вылете гостей
-                        btn.textContent = "Начать реванш (Дилер)";
+                    // Возврат дилеру возможности голосовать за реванш, а не форсировать принудительно
+                    const hasIApproved = proposedReplayPlayers.some(p => p.id === myPlayerId);
+                    if (hasIApproved) {
+                        btn.textContent = "Реванш принят (Ожидание)";
+                        btn.disabled = true;
+                        btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
+                    } else {
+                        btn.textContent = "Проголосовать за реванш";
                         btn.className = "w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-md shadow-[0_0_25px_rgba(16,185,129,0.7)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-400 cursor-pointer";
                         btn.onclick = () => {
-                            resetRoundNetwork();
+                            proposeReplayFromMe();
                         };
-                    } else {
-                        const hasIApproved = proposedReplayPlayers.some(p => p.id === myPlayerId);
-                        if (hasIApproved) {
-                            btn.textContent = "Реванш принят (Ожидание)";
-                            btn.disabled = true;
-                            btn.className = "w-full px-8 py-4 bg-zinc-800 text-zinc-500 border-2 border-zinc-700 font-extrabold rounded-md uppercase text-sm tracking-widest cursor-not-allowed";
-                        } else {
-                            btn.textContent = "Проголосовать за реванш";
-                            btn.className = "w-full px-8 py-4 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold rounded-md shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 uppercase text-sm tracking-widest border border-emerald-500 cursor-pointer";
-                            btn.onclick = () => {
-                                proposeReplayFromMe();
-                            };
-                        }
                     }
                 } else {
                     btn.textContent = "Сыграть снова (Реванш)";
@@ -1989,10 +1982,10 @@
 
             log('Вы проголосовали за реванш!', 'system');
 
-            // Перерисовываем оверлей у себя
+            // Перерисовываем оверлей у себя локально (он покажет "Реванш принят (Ожидание)")
             showShotOutcomeOverlay(null, true);
 
-            // Если я Хост, проверяем, проголосовали ли все участники
+            // Если я Хост, проверяем, проголосовали ли все
             if (amIHost()) {
                 checkAndTriggerAutoReplay();
             }
